@@ -1,0 +1,29 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      Name: RobotModel
+    - Class: rviz_default_plugins/TF
+      Name: TF
+    - Class: moveit_rviz_plugin/MotionPlanning
+      Move Group Namespace: ""
+      Name: MotionPlanning
+      Planning Group: xarm7
+      Planning Request:
+        Planning Group: xarm7
+      Robot Description: robot_description
+  Enabled: true
+  Global Options:
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Name: root
+Window Geometry:
+  Height: 900
+  Width: 1440

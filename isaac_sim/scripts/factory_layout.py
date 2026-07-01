@@ -9,7 +9,7 @@ MAIN_AISLE_WIDTH = 1.2
 SERVICE_AISLE_WIDTH = 0.8
 # The imported chassis collision mesh extends below the older 0.242 m spawn,
 # so keep a small clearance above the ground plane to avoid interpenetration.
-ROBOT_CLEARANCE_Z = 0.6
+ROBOT_CLEARANCE_Z = 0.3
 ROBOT_SPAWN = (-3.8, -2.8, ROBOT_CLEARANCE_Z, 0.0)
 NAV_GOALS = (
     (-0.5, -2.8, 0.0),

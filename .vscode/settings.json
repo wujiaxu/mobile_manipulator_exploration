@@ -1,0 +1,5 @@
+{
+    "cmake.sourceDirectory": "/home/user/wu_ws/mobile_manipulator_exploration/mobile_manipulator_description",
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
+}

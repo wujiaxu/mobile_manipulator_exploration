@@ -30,7 +30,14 @@ def parse_args(argv=None):
         / "isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd",
     )
     parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--disable-lidar", action="store_true")
+    parser.add_argument(
+        "--spawn",
+        type=float,
+        nargs=4,
+        metavar=("X", "Y", "Z", "YAW"),
+        default=ROBOT_SPAWN,
+        help="Robot spawn pose in meters/radians: x y z yaw.",
+    )
     parser.add_argument(
         "--duration", type=float, default=0.0, help="Wall seconds; zero runs until closed."
     )
@@ -56,16 +63,26 @@ def main():
     import omni.graph.core as og
     import omni.timeline
     import omni.usd
-    import numpy as np
+    import carb.settings
     from isaacsim.core.utils.extensions import enable_extension
     from isaacsim.core.utils.viewports import set_camera_view
-    from isaacsim.sensors.rtx import LidarRtx
     from omni.isaac.dynamic_control import _dynamic_control
     from pxr import Sdf, Usd, UsdGeom, UsdPhysics
 
     enable_extension("isaacsim.ros2.bridge")
     enable_extension("isaacsim.sensors.rtx")
     app.update()
+    lidar_config_dir = str((SCRIPT_DIR.parents[0] / "config/lidar").resolve()) + "/"
+    lidar_profile_folders = carb.settings.get_settings().get(
+        "/app/sensors/nv/lidar/profileBaseFolder"
+    )
+    if lidar_profile_folders is None:
+        lidar_profile_folders = []
+    if lidar_config_dir not in lidar_profile_folders:
+        carb.settings.get_settings().set(
+            "/app/sensors/nv/lidar/profileBaseFolder",
+            [lidar_config_dir, *lidar_profile_folders],
+        )
 
     context = omni.usd.get_context()
     context.new_stage()
@@ -84,13 +101,14 @@ def main():
         raise RuntimeError("Missing /mobile_manipulator")
 
     robot_xform = UsdGeom.XformCommonAPI(robot)
-    robot_xform.SetTranslate((ROBOT_SPAWN[0], ROBOT_SPAWN[1], 0.0))
-    robot_xform.SetRotate((0.0, 0.0, degrees(ROBOT_SPAWN[3])))
+    spawn_pose_values = tuple(args.spawn)
+    robot_xform.SetTranslate((spawn_pose_values[0], spawn_pose_values[1], 0.0))
+    robot_xform.SetRotate((0.0, 0.0, degrees(spawn_pose_values[3])))
     base_link = stage.GetPrimAtPath(Sdf.Path("/mobile_manipulator/base_link"))
     if not base_link.IsValid():
         raise RuntimeError("Missing /mobile_manipulator/base_link")
     base_xform = UsdGeom.XformCommonAPI(base_link)
-    base_xform.SetTranslate((0.0, 0.0, ROBOT_SPAWN[2]))
+    base_xform.SetTranslate((0.0, 0.0, spawn_pose_values[2]))
     app.update()
 
     articulation_roots = [
@@ -101,45 +119,18 @@ def main():
     if len(articulation_roots) != 1:
         raise RuntimeError(f"Expected one articulation root, found {len(articulation_roots)}")
     articulation_path = str(articulation_roots[0].GetPath())
-
-    lidar = None
-    if not args.disable_lidar:
-        lidar = LidarRtx(
-            prim_path="/mobile_manipulator/livox_frame/NavLidar",
-            name="nav_lidar",
-            translation=np.array([0.0, 0.0, 0.0]),
-            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
-            config_file_name="Example_Rotary_2D",
-        )
-        action_graph = og.Controller.graph("/ActionGraph")
-        if action_graph is None:
-            raise RuntimeError("Robot USD is missing /ActionGraph")
-        og.Controller.edit(
-            action_graph,
-            {
-                og.Controller.Keys.CREATE_NODES: [
-                    ("ScanPublisher", "isaacsim.ros2.bridge.ROS2RtxLidarHelper"),
-                ],
-                og.Controller.Keys.CONNECT: [
-                    (
-                        "/ActionGraph/OnPlaybackTick.outputs:tick",
-                        "ScanPublisher.inputs:execIn",
-                    ),
-                ],
-                og.Controller.Keys.SET_VALUES: [
-                    (
-                        "ScanPublisher.inputs:renderProductPath",
-                        lidar.get_render_product_path(),
-                    ),
-                    ("ScanPublisher.inputs:topicName", "scan"),
-                    ("ScanPublisher.inputs:frameId", "livox_frame"),
-                    ("ScanPublisher.inputs:type", "laser_scan"),
-                    ("ScanPublisher.inputs:useSystemTime", False),
-                    ("ScanPublisher.inputs:resetSimulationTimeOnStop", True),
-                ],
-            },
-        )
-        app.update()
+    if not stage.GetPrimAtPath(Sdf.Path("/mobile_manipulator/livox_frame/NavLidar")).IsValid():
+        raise RuntimeError("Robot USD is missing /mobile_manipulator/livox_frame/NavLidar")
+    graph_path = None
+    for candidate in ("/mobile_manipulator/ActionGraph", "/ActionGraph"):
+        if og.Controller.graph(candidate) is not None:
+            graph_path = candidate
+            break
+    if graph_path is None:
+        raise RuntimeError("Robot USD is missing ActionGraph")
+    if not stage.GetPrimAtPath(Sdf.Path(f"{graph_path}/ScanPublisher")).IsValid():
+        raise RuntimeError(f"Robot USD is missing {graph_path}/ScanPublisher")
+    app.update()
 
     if not args.headless:
         set_camera_view(
@@ -157,9 +148,9 @@ def main():
     if articulation_handle == _dynamic_control.INVALID_HANDLE:
         raise RuntimeError(f"Could not access articulation: {articulation_path}")
     root_body = dynamic_control.get_articulation_root_body(articulation_handle)
-    yaw = ROBOT_SPAWN[3]
+    yaw = spawn_pose_values[3]
     spawn_pose = _dynamic_control.Transform(
-        (ROBOT_SPAWN[0], ROBOT_SPAWN[1], ROBOT_SPAWN[2]),
+        (spawn_pose_values[0], spawn_pose_values[1], spawn_pose_values[2]),
         (0.0, 0.0, sin(yaw / 2.0), cos(yaw / 2.0)),
     )
     dynamic_control.set_rigid_body_pose(root_body, spawn_pose)
@@ -179,7 +170,6 @@ def main():
             break
 
     timeline.stop()
-    lidar = None
     app.close()
 
 if __name__ == "__main__":

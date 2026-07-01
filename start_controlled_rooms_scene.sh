@@ -4,9 +4,10 @@ set -Eeuo pipefail
 WORKSPACE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ISAAC_PYTHON="/home/user/anaconda3/envs/env_isaaclab/bin/python"
 ISAAC_RUNNER="${WORKSPACE}/isaac_sim/scripts/run_factory_navigation.py"
-FACTORY_USD="${WORKSPACE}/isaac_sim/assets/environments/compact_factory/compact_factory.usd"
+ROOMS_USD="${WORKSPACE}/isaac_sim/assets/environments/controlled_rooms/controlled_rooms.usd"
 ROBOT_USD="${WORKSPACE}/isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd"
 ISAAC_ROS_LIB="/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib"
+ROBOT_SPAWN=(-4.5 -4.5 0.6 0.0)
 
 dry_run=0
 isaac_pid=""
@@ -19,9 +20,9 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: ./start_factory_scene.sh [--dry-run]
+Usage: ./start_controlled_rooms_scene.sh [--dry-run]
 
-Starts only the Isaac Sim factory scene with the mobile manipulator.
+Starts only the Isaac Sim controlled 2x2 room scene with the mobile manipulator.
 It does not start Nav2, SLAM Toolbox, or RViz2.
 EOF
 }
@@ -74,7 +75,7 @@ while (($#)); do
 done
 
 require_file "$ISAAC_RUNNER"
-require_file "$FACTORY_USD"
+require_file "$ROOMS_USD"
 require_file "$ROBOT_USD"
 require_executable "$ISAAC_PYTHON"
 
@@ -86,18 +87,19 @@ isaac_command=(
   PYTHONUNBUFFERED=1
   "$ISAAC_PYTHON"
   "$ISAAC_RUNNER"
-  --factory-usd "$FACTORY_USD"
+  --factory-usd "$ROOMS_USD"
   --robot-usd "$ROBOT_USD"
+  --spawn "${ROBOT_SPAWN[@]}"
 )
 
 if ((dry_run)); then
-  printf 'Isaac factory scene command:'
+  printf 'Isaac controlled rooms scene command:'
   printf ' %q' "${isaac_command[@]}"
   printf '\n'
   exit 0
 fi
 
-printf 'Starting Isaac Sim factory scene with mobile manipulator...\n'
+printf 'Starting Isaac Sim controlled rooms scene with mobile manipulator...\n'
 printf 'Press Ctrl+C in this terminal to stop Isaac Sim.\n'
 setsid "${isaac_command[@]}" &
 isaac_pid=$!

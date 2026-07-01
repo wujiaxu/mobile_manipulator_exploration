@@ -11,6 +11,7 @@ import yaml
 
 ISAAC_DIR = Path(__file__).resolve().parents[1]
 RUNNER = ISAAC_DIR / "scripts/run_factory_navigation.py"
+IMPORTER = ISAAC_DIR / "scripts/import_mobile_manipulator.py"
 ROOT = ISAAC_DIR.parent
 NAV_PACKAGE = ROOT / "mobile_manipulator_navigation"
 LAUNCHER = ROOT / "start_navigation_test.sh"
@@ -24,27 +25,47 @@ class FactoryNavigationRunnerContract(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("run_factory_navigation", RUNNER)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        args = module.parse_args(
-            ["--headless", "--duration", "5", "--disable-lidar"]
-        )
+        args = module.parse_args(["--headless", "--duration", "5"])
         self.assertTrue(args.headless)
         self.assertEqual(args.duration, 5.0)
-        self.assertTrue(args.disable_lidar)
+        self.assertFalse(hasattr(args, "disable_lidar"))
         self.assertTrue(str(args.factory_usd).endswith("compact_factory.usd"))
         self.assertTrue(str(args.robot_usd).endswith("mobile_manipulator_ros.usd"))
 
-    def test_runner_composes_factory_and_publishes_calibrated_scan(self):
-        source = RUNNER.read_text(encoding="utf-8")
+    def test_importer_bakes_lidar_and_scan_publisher_into_robot_usd(self):
+        source = IMPORTER.read_text(encoding="utf-8")
         for required in (
-            '"/Factory"',
             '"/mobile_manipulator/livox_frame/NavLidar"',
-            '"Example_Rotary_2D"',
+            '"MobileManipulator_Nav2D"',
             '"isaacsim.ros2.bridge.ROS2RtxLidarHelper"',
-            '"/ActionGraph/OnPlaybackTick.outputs:tick"',
+            '"isaacsim.core.nodes.IsaacCreateRenderProduct"',
+            '("CreateLidarRenderProduct.outputs:execOut", "ScanPublisher.inputs:execIn")',
+            (
+                '"CreateLidarRenderProduct.outputs:renderProductPath",\n'
+                '                    "ScanPublisher.inputs:renderProductPath"'
+            ),
+            (
+                '"CreateLidarRenderProduct.inputs:cameraPrim",\n'
+                '                    [usdrt.Sdf.Path("/mobile_manipulator/livox_frame/NavLidar")]'
+            ),
             '("ScanPublisher.inputs:topicName", "scan")',
             '("ScanPublisher.inputs:frameId", "livox_frame")',
             '("ScanPublisher.inputs:type", "laser_scan")',
             '("ScanPublisher.inputs:useSystemTime", False)',
+        ):
+            self.assertIn(required, source)
+        self.assertNotIn("get_render_product_path()", source)
+        self.assertNotIn('"ScanPublisher.inputs:renderProductPath",\n                    lidar_', source)
+
+    def test_runner_composes_factory_and_requires_baked_lidar(self):
+        source = RUNNER.read_text(encoding="utf-8")
+        for required in (
+            '"/Factory"',
+            '"/mobile_manipulator/livox_frame/NavLidar"',
+            '"/mobile_manipulator/ActionGraph"',
+            '"/ActionGraph"',
+            '/ScanPublisher',
+            '"/app/sensors/nv/lidar/profileBaseFolder"',
             "ROBOT_SPAWN",
         ):
             self.assertIn(required, source)
@@ -52,11 +73,17 @@ class FactoryNavigationRunnerContract(unittest.TestCase):
         self.assertIn("subLayerPaths", source)
         self.assertLess(source.index("str(factory_usd)"), source.index("str(robot_usd)"))
         self.assertNotIn("open_stage(str(robot_usd))", source)
+        self.assertNotIn("disable_lidar", source)
+        self.assertNotIn("LidarRtx", source)
+        self.assertNotIn("ROS2RtxLidarHelper", source)
+        self.assertNotIn("og.Controller.edit", source)
 
-    def test_runner_edits_the_imported_action_graph(self):
+    def test_runner_uses_the_imported_action_graph(self):
         source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn('og.Controller.graph("/ActionGraph")', source)
-        self.assertRegex(source, r"og\.Controller\.edit\(\s*action_graph,")
+        self.assertIn('("/mobile_manipulator/ActionGraph", "/ActionGraph")', source)
+        self.assertIn("og.Controller.graph(candidate)", source)
+        self.assertIn('Sdf.Path(f"{graph_path}/ScanPublisher")', source)
+        self.assertNotIn("og.Controller.edit(", source)
         self.assertNotIn(
             'og.Controller.edit(\n            {"graph_path": "/ActionGraph"',
             source,

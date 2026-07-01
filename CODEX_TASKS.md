@@ -688,11 +688,8 @@ cd /home/user/wu_ws/mobile_manipulator_exploration
 ./start_factory_scene.sh
 ```
 
-If startup is slow or unstable, first try:
-
-```bash
-./start_factory_scene.sh --disable-lidar
-```
+The factory scene launcher now always starts the LiDAR and publishes `/scan`;
+there is no no-LiDAR mode.
 
 ## 2026-06-23 Factory Lighting Fix
 
@@ -762,7 +759,7 @@ Next visual check:
 
 ```bash
 cd /home/user/wu_ws/mobile_manipulator_exploration
-./start_factory_scene.sh --disable-lidar
+./start_factory_scene.sh
 ```
 
 If the base still sinks after this change, the next likely cause is the imported
@@ -958,3 +955,250 @@ Required next step:
 
 Restart `./start_navigation_test.sh` so the running Slam Toolbox process loads
 the new installed parameters.
+
+## 2026-06-25 Controlled Rooms SLAM Test Environment
+
+Added a less cluttered Isaac test environment for controlled SLAM/Nav2 checks:
+
+- New source layout:
+  - `isaac_sim/scripts/controlled_rooms_layout.py`
+- New USD generator:
+  - `isaac_sim/scripts/generate_controlled_rooms_environment.py`
+- Generated USD:
+  - `isaac_sim/assets/environments/controlled_rooms/controlled_rooms.usd`
+- New launch helpers:
+  - `./start_controlled_rooms_scene.sh`
+  - `./start_controlled_rooms_navigation.sh`
+
+Environment structure:
+
+- Four 6 m x 6 m rooms in a 2x2 layout, total 12 m x 12 m.
+- Door gaps between adjacent rooms allow the robot to pass room to room.
+- Room 1 has two 1 m vertical pipes in the middle, each with a horizontal pipe
+  from its top to the west wall.
+- Room 2 has four vertical pipes in one line, 0.5 m from the south wall.
+- Room 3 has one tank with 1 m diameter and 0.7 m height.
+- Room 4 has two vertical-pipe lines near different walls, and one line has a
+  horizontal pipe connecting all pipes.
+
+Runner change:
+
+- `isaac_sim/scripts/run_factory_navigation.py` now accepts:
+
+```bash
+--spawn X Y Z YAW
+```
+
+This allows different test environments to use different robot start poses
+without changing the old compact factory layout.
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  isaac_sim/scripts/controlled_rooms_layout.py \
+  isaac_sim/scripts/generate_controlled_rooms_environment.py \
+  isaac_sim/scripts/run_factory_navigation.py
+bash -n start_controlled_rooms_scene.sh start_controlled_rooms_navigation.sh
+/home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/generate_controlled_rooms_environment.py
+./start_controlled_rooms_scene.sh --dry-run
+./start_controlled_rooms_navigation.sh --dry-run
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/run_factory_navigation.py \
+  --factory-usd isaac_sim/assets/environments/controlled_rooms/controlled_rooms.usd \
+  --robot-usd isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd \
+  --spawn -4.5 -4.5 0.6 0.0 \
+  --headless --duration 1
+```
+
+Next commands:
+
+```bash
+# Scene only
+./start_controlled_rooms_scene.sh
+
+# Full Isaac + SLAM/Nav2/RViz test
+./start_controlled_rooms_navigation.sh
+```
+
+## 2026-07-01 Baked LiDAR USD Render Product Fix
+
+Current robot USD behavior:
+
+- The RTX LiDAR prim is baked into the robot USD at:
+  - `/mobile_manipulator/livox_frame/NavLidar`
+- The ROS2 scan publisher is baked into the robot USD ActionGraph as:
+  - `ScanPublisher`
+- The scan publisher no longer stores a stale fixed render product path like:
+  - `/Render/OmniverseKit/HydraTextures/Replicator`
+- Instead, the baked ActionGraph creates the LiDAR render product at runtime with:
+  - `CreateLidarRenderProduct`
+  - node type: `isaacsim.core.nodes.IsaacCreateRenderProduct`
+  - camera prim: `/mobile_manipulator/livox_frame/NavLidar`
+
+Files changed:
+
+- `isaac_sim/scripts/import_mobile_manipulator.py`
+  - Creates the RTX LiDAR prim directly with `IsaacSensorCreateRtxLidar`.
+  - Adds `CreateLidarRenderProduct` and connects its output path to
+    `ScanPublisher.inputs:renderProductPath`.
+- `isaac_sim/scripts/run_factory_navigation.py`
+  - Accepts either `/ActionGraph` or `/mobile_manipulator/ActionGraph`, because
+    Isaac composition may place the imported graph at either path.
+- `isaac_sim/tests/test_navigation_contract.py`
+  - Locks the baked-LiDAR and runtime-render-product contract.
+
+Regenerated robot USD:
+
+```text
+isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator.usd
+isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd
+```
+
+Minimum LiDAR range remains here:
+
+```text
+isaac_sim/config/lidar/MobileManipulator_Nav2D.json
+```
+
+Important values:
+
+```json
+"nearRangeM": 0.15,
+"minDistBetweenEchos": 0.15
+```
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  isaac_sim/scripts/import_mobile_manipulator.py \
+  isaac_sim/scripts/run_factory_navigation.py \
+  isaac_sim/tests/test_navigation_contract.py
+
+python3 -m unittest \
+  isaac_sim.tests.test_navigation_contract.FactoryNavigationRunnerContract -v
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/import_mobile_manipulator.py
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/run_factory_navigation.py \
+  --factory-usd isaac_sim/assets/environments/controlled_rooms/controlled_rooms.usd \
+  --robot-usd isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd \
+  --spawn -4.5 -4.5 0.6 0.0 \
+  --headless --duration 1
+```
+
+Next commands:
+
+```bash
+# Scene only
+./start_controlled_rooms_scene.sh
+
+# Full Isaac + SLAM/Nav2/RViz test
+./start_controlled_rooms_navigation.sh
+```
+
+## 2026-06-25 Robot USD Regeneration and Required LiDAR Scan
+
+Regenerated the Isaac robot USD from the unified Xacro/URDF path:
+
+- Expanded Xacro:
+  - `build/isaac_import/mobile_manipulator.urdf`
+- Regenerated Isaac USD:
+  - `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator.usd`
+  - `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd`
+
+Removed the old no-LiDAR mode from the Isaac scene launchers:
+
+- `./start_factory_scene.sh`
+- `./start_controlled_rooms_scene.sh`
+
+LiDAR/scan behavior:
+
+- The scene runner always creates the RTX LiDAR at:
+  - `/mobile_manipulator/livox_frame/NavLidar`
+- It publishes ROS2 `LaserScan` on:
+  - topic: `/scan`
+  - frame: `livox_frame`
+- The runner loads the project-local LiDAR profile directory via Isaac setting:
+  - `/app/sensors/nv/lidar/profileBaseFolder`
+
+Minimum LiDAR range is set here:
+
+```text
+isaac_sim/config/lidar/MobileManipulator_Nav2D.json
+```
+
+Important profile values:
+
+```json
+"nearRangeM": 0.15,
+"minDistBetweenEchos": 0.15,
+"elevationDeg": [0.0]
+```
+
+The runner selects that profile here:
+
+```text
+isaac_sim/scripts/run_factory_navigation.py
+config_file_name="MobileManipulator_Nav2D"
+```
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  isaac_sim/scripts/run_factory_navigation.py \
+  isaac_sim/scripts/import_mobile_manipulator.py \
+  isaac_sim/tests/test_navigation_contract.py
+
+bash -n \
+  start_factory_scene.sh \
+  start_controlled_rooms_scene.sh \
+  start_navigation_test.sh \
+  start_controlled_rooms_navigation.sh
+
+python3 -m json.tool isaac_sim/config/lidar/MobileManipulator_Nav2D.json
+python3 -m unittest isaac_sim.tests.test_navigation_contract.FactoryNavigationRunnerContract
+
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run xacro xacro \
+  mobile_manipulator_description/urdf/mobile_manipulator.urdf.xacro \
+  > build/isaac_import/mobile_manipulator.urdf
+
+/home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/import_mobile_manipulator.py
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/run_factory_navigation.py \
+  --factory-usd isaac_sim/assets/environments/controlled_rooms/controlled_rooms.usd \
+  --robot-usd isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd \
+  --spawn -4.5 -4.5 0.6 0.0 \
+  --headless --duration 1
+```
+
+Next commands:
+
+```bash
+# Scene only, with LiDAR and /scan
+./start_controlled_rooms_scene.sh
+
+# Full Isaac + SLAM/Nav2/RViz test
+./start_controlled_rooms_navigation.sh
+```

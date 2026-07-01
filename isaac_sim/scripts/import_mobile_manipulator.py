@@ -46,12 +46,26 @@ def main():
     import omni.kit.commands
     import omni.usd
     import usdrt
+    import carb.settings
     from isaacsim.core.utils.extensions import enable_extension
-    from pxr import Usd, UsdGeom, UsdPhysics
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
     enable_extension("isaacsim.asset.importer.urdf")
     enable_extension("isaacsim.ros2.bridge")
+    enable_extension("isaacsim.sensors.rtx")
     simulation_app.update()
+
+    lidar_config_dir = str((workspace / "isaac_sim/config/lidar").resolve()) + "/"
+    lidar_profile_folders = carb.settings.get_settings().get(
+        "/app/sensors/nv/lidar/profileBaseFolder"
+    )
+    if lidar_profile_folders is None:
+        lidar_profile_folders = []
+    if lidar_config_dir not in lidar_profile_folders:
+        carb.settings.get_settings().set(
+            "/app/sensors/nv/lidar/profileBaseFolder",
+            [lidar_config_dir, *lidar_profile_folders],
+        )
 
     base_usd = output_dir / "mobile_manipulator.usd"
     ros_usd = output_dir / "mobile_manipulator_ros.usd"
@@ -122,6 +136,18 @@ def main():
     robot = overlay_stage.GetPrimAtPath("/mobile_manipulator")
     overlay_stage.SetDefaultPrim(robot)
 
+    status, lidar_prim = omni.kit.commands.execute(
+        "IsaacSensorCreateRtxLidar",
+        path="/mobile_manipulator/livox_frame/NavLidar",
+        parent=None,
+        config="MobileManipulator_Nav2D",
+        translation=Gf.Vec3d(0.0, 0.0, 0.0),
+        orientation=Gf.Quatd(1.0, 0.0, 0.0, 0.0),
+    )
+    if not status or not lidar_prim:
+        raise RuntimeError("Could not create /mobile_manipulator/livox_frame/NavLidar")
+    simulation_app.update()
+
     og.Controller.edit(
         {"graph_path": "/ActionGraph", "evaluator_name": "execution"},
         {
@@ -156,6 +182,11 @@ def main():
                     "ArmArticulationController",
                     "isaacsim.core.nodes.IsaacArticulationController",
                 ),
+                (
+                    "CreateLidarRenderProduct",
+                    "isaacsim.core.nodes.IsaacCreateRenderProduct",
+                ),
+                ("ScanPublisher", "isaacsim.ros2.bridge.ROS2RtxLidarHelper"),
             ],
             og.Controller.Keys.CONNECT: [
                 ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
@@ -163,6 +194,15 @@ def main():
                 ("OnPlaybackTick.outputs:tick", "ComputeOdometry.inputs:execIn"),
                 ("OnPlaybackTick.outputs:tick", "PublishOdometry.inputs:execIn"),
                 ("OnPlaybackTick.outputs:tick", "PublishOdomTF.inputs:execIn"),
+                (
+                    "OnPlaybackTick.outputs:tick",
+                    "CreateLidarRenderProduct.inputs:execIn",
+                ),
+                ("CreateLidarRenderProduct.outputs:execOut", "ScanPublisher.inputs:execIn"),
+                (
+                    "CreateLidarRenderProduct.outputs:renderProductPath",
+                    "ScanPublisher.inputs:renderProductPath",
+                ),
                 ("Context.outputs:context", "PublishJointState.inputs:context"),
                 ("Context.outputs:context", "PublishClock.inputs:context"),
                 ("Context.outputs:context", "PublishOdometry.inputs:context"),
@@ -292,6 +332,17 @@ def main():
                     "ArmArticulationController.inputs:targetPrim",
                     [usdrt.Sdf.Path(articulation_path)],
                 ),
+                (
+                    "CreateLidarRenderProduct.inputs:cameraPrim",
+                    [usdrt.Sdf.Path("/mobile_manipulator/livox_frame/NavLidar")],
+                ),
+                ("CreateLidarRenderProduct.inputs:width", 1),
+                ("CreateLidarRenderProduct.inputs:height", 1),
+                ("ScanPublisher.inputs:topicName", "scan"),
+                ("ScanPublisher.inputs:frameId", "livox_frame"),
+                ("ScanPublisher.inputs:type", "laser_scan"),
+                ("ScanPublisher.inputs:useSystemTime", False),
+                ("ScanPublisher.inputs:resetSimulationTimeOnStop", True),
             ],
         },
     )

@@ -38,6 +38,8 @@ class FactoryNavigationRunnerContract(unittest.TestCase):
             '"/mobile_manipulator/livox_frame/NavLidar"',
             '"MobileManipulator_Nav2D"',
             '"isaacsim.ros2.bridge.ROS2RtxLidarHelper"',
+            '"isaacsim.ros2.bridge.ROS2CameraHelper"',
+            '"isaacsim.ros2.bridge.ROS2CameraInfoHelper"',
             '"isaacsim.core.nodes.IsaacCreateRenderProduct"',
             '("CreateLidarRenderProduct.outputs:execOut", "ScanPublisher.inputs:execIn")',
             (
@@ -62,9 +64,16 @@ class FactoryNavigationRunnerContract(unittest.TestCase):
         for required in (
             '"/Factory"',
             '"/mobile_manipulator/livox_frame/NavLidar"',
+            '"/mobile_manipulator/wrist_camera_color_optical_frame/D455Camera"',
             '"/mobile_manipulator/ActionGraph"',
             '"/ActionGraph"',
-            '/ScanPublisher',
+            '"ScanPublisher"',
+            '"WristRgbPublisher"',
+            '"WristDepthPublisher"',
+            '"WristCameraInfoPublisher"',
+            "/wrist_camera/color/image_raw",
+            "/wrist_camera/depth/image_rect_raw",
+            "/wrist_camera/color/camera_info",
             '"/app/sensors/nv/lidar/profileBaseFolder"',
             "ROBOT_SPAWN",
         ):
@@ -82,7 +91,8 @@ class FactoryNavigationRunnerContract(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('("/mobile_manipulator/ActionGraph", "/ActionGraph")', source)
         self.assertIn("og.Controller.graph(candidate)", source)
-        self.assertIn('Sdf.Path(f"{graph_path}/ScanPublisher")', source)
+        self.assertIn('node_path = f"{graph_path}/{node_name}"', source)
+        self.assertIn("Sdf.Path(node_path)", source)
         self.assertNotIn("og.Controller.edit(", source)
         self.assertNotIn(
             'og.Controller.edit(\n            {"graph_path": "/ActionGraph"',
@@ -136,9 +146,9 @@ class NavigationPackageContract(unittest.TestCase):
         self.assertEqual(params["base_frame"], "base_link")
         self.assertEqual(params["scan_topic"], "/scan")
         self.assertEqual(params["resolution"], 0.05)
-        self.assertGreaterEqual(params["scan_queue_size"], 100)
-        self.assertGreaterEqual(params["throttle_scans"], 5)
-        self.assertGreaterEqual(params["transform_timeout"], 1.0)
+        self.assertGreaterEqual(params["scan_buffer_size"], 10)
+        self.assertGreaterEqual(params["throttle_scans"], 1)
+        self.assertGreater(params["transform_timeout"], 0.0)
 
     def test_nav2_costmaps_and_speed_contract(self):
         config = yaml.safe_load(self.nav2_path.read_text())

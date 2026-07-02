@@ -219,6 +219,53 @@ class ImportedRobotContractTest(unittest.TestCase):
             "/ActionGraph/SubscribeArmJointState.outputs:execOut",
         )
 
+    def test_ros_overlay_has_wrist_rgbd_camera_publishers(self):
+        stage = self.ros_stage()
+        camera = stage.GetPrimAtPath(
+            f"{ROBOT_PATH}/wrist_camera_color_optical_frame/D455Camera"
+        )
+        self.assertTrue(camera.IsValid())
+        rotate = camera.GetAttribute("xformOp:rotateXYZ")
+        self.assertTrue(rotate.IsValid())
+        self.assertEqual(tuple(rotate.Get()), (180.0, 0.0, 0.0))
+        for name in (
+            "CreateWristCameraRenderProduct",
+            "WristRgbPublisher",
+            "WristDepthPublisher",
+            "WristCameraInfoPublisher",
+        ):
+            self.assertTrue(stage.GetPrimAtPath(f"/ActionGraph/{name}").IsValid(), name)
+
+        render_product = stage.GetPrimAtPath("/ActionGraph/CreateWristCameraRenderProduct")
+        rgb = stage.GetPrimAtPath("/ActionGraph/WristRgbPublisher")
+        depth = stage.GetPrimAtPath("/ActionGraph/WristDepthPublisher")
+        info = stage.GetPrimAtPath("/ActionGraph/WristCameraInfoPublisher")
+        self.assert_target(
+            render_product,
+            "cameraPrim",
+            [f"{ROBOT_PATH}/wrist_camera_color_optical_frame/D455Camera"],
+        )
+        self.assert_input(render_product, "width", 640)
+        self.assert_input(render_product, "height", 480)
+        self.assert_input(rgb, "topicName", "wrist_camera/color/image_raw")
+        self.assert_input(rgb, "frameId", "wrist_camera_color_optical_frame")
+        self.assert_input(rgb, "type", "rgb")
+        self.assert_input(depth, "topicName", "wrist_camera/depth/image_rect_raw")
+        self.assert_input(depth, "frameId", "wrist_camera_color_optical_frame")
+        self.assert_input(depth, "type", "depth")
+        self.assert_input(info, "topicName", "wrist_camera/color/camera_info")
+        self.assert_input(info, "frameId", "wrist_camera_color_optical_frame")
+        for destination in (
+            "WristRgbPublisher.inputs:renderProductPath",
+            "WristDepthPublisher.inputs:renderProductPath",
+            "WristCameraInfoPublisher.inputs:renderProductPath",
+        ):
+            self.assert_connected_from(
+                stage,
+                f"/ActionGraph/{destination}",
+                "/ActionGraph/CreateWristCameraRenderProduct.outputs:renderProductPath",
+            )
+
     def test_ros_overlay_has_odometry_and_one_dynamic_base_tf(self):
         stage = self.ros_stage()
         compute = stage.GetPrimAtPath("/ActionGraph/ComputeOdometry")

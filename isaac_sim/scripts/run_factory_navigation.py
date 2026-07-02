@@ -128,8 +128,23 @@ def main():
             break
     if graph_path is None:
         raise RuntimeError("Robot USD is missing ActionGraph")
-    if not stage.GetPrimAtPath(Sdf.Path(f"{graph_path}/ScanPublisher")).IsValid():
-        raise RuntimeError(f"Robot USD is missing {graph_path}/ScanPublisher")
+    required_robot_prims = (
+        "/mobile_manipulator/livox_frame/NavLidar",
+        "/mobile_manipulator/wrist_camera_color_optical_frame/D455Camera",
+    )
+    for prim_path in required_robot_prims:
+        if not stage.GetPrimAtPath(Sdf.Path(prim_path)).IsValid():
+            raise RuntimeError(f"Robot USD is missing {prim_path}")
+    required_graph_nodes = (
+        "ScanPublisher",
+        "WristRgbPublisher",
+        "WristDepthPublisher",
+        "WristCameraInfoPublisher",
+    )
+    for node_name in required_graph_nodes:
+        node_path = f"{graph_path}/{node_name}"
+        if not stage.GetPrimAtPath(Sdf.Path(node_path)).IsValid():
+            raise RuntimeError(f"Robot USD is missing {node_path}")
     app.update()
 
     if not args.headless:
@@ -162,7 +177,11 @@ def main():
     started = time.monotonic()
     print(f"Factory: {factory_usd}")
     print(f"Robot: {robot_usd}")
-    print("Publishing: /clock /joint_states /odom /tf /scan")
+    print(
+        "Publishing: /clock /joint_states /odom /tf /scan "
+        "/wrist_camera/color/image_raw /wrist_camera/depth/image_rect_raw "
+        "/wrist_camera/color/camera_info"
+    )
     
     while app.is_running():
         app.update()

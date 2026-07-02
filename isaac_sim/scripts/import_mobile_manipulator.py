@@ -146,6 +146,18 @@ def main():
     )
     if not status or not lidar_prim:
         raise RuntimeError("Could not create /mobile_manipulator/livox_frame/NavLidar")
+
+    camera = UsdGeom.Camera.Define(
+        overlay_stage,
+        "/mobile_manipulator/wrist_camera_color_optical_frame/D455Camera",
+    )
+    # USD cameras look along local -Z. Rotate the prim so its rendered FOV
+    # points along ROS optical +Z while the published frame remains optical.
+    UsdGeom.XformCommonAPI(camera.GetPrim()).SetRotate((180.0, 0.0, 0.0))
+    camera.CreateHorizontalApertureAttr(21.0)
+    camera.CreateVerticalApertureAttr(15.75)
+    camera.CreateFocalLengthAttr(2.0)
+    camera.CreateClippingRangeAttr(Gf.Vec2f(0.15, 8.0))
     simulation_app.update()
 
     og.Controller.edit(
@@ -187,6 +199,16 @@ def main():
                     "isaacsim.core.nodes.IsaacCreateRenderProduct",
                 ),
                 ("ScanPublisher", "isaacsim.ros2.bridge.ROS2RtxLidarHelper"),
+                (
+                    "CreateWristCameraRenderProduct",
+                    "isaacsim.core.nodes.IsaacCreateRenderProduct",
+                ),
+                ("WristRgbPublisher", "isaacsim.ros2.bridge.ROS2CameraHelper"),
+                ("WristDepthPublisher", "isaacsim.ros2.bridge.ROS2CameraHelper"),
+                (
+                    "WristCameraInfoPublisher",
+                    "isaacsim.ros2.bridge.ROS2CameraInfoHelper",
+                ),
             ],
             og.Controller.Keys.CONNECT: [
                 ("OnPlaybackTick.outputs:tick", "PublishJointState.inputs:execIn"),
@@ -202,6 +224,34 @@ def main():
                 (
                     "CreateLidarRenderProduct.outputs:renderProductPath",
                     "ScanPublisher.inputs:renderProductPath",
+                ),
+                (
+                    "OnPlaybackTick.outputs:tick",
+                    "CreateWristCameraRenderProduct.inputs:execIn",
+                ),
+                (
+                    "CreateWristCameraRenderProduct.outputs:execOut",
+                    "WristRgbPublisher.inputs:execIn",
+                ),
+                (
+                    "CreateWristCameraRenderProduct.outputs:execOut",
+                    "WristDepthPublisher.inputs:execIn",
+                ),
+                (
+                    "CreateWristCameraRenderProduct.outputs:execOut",
+                    "WristCameraInfoPublisher.inputs:execIn",
+                ),
+                (
+                    "CreateWristCameraRenderProduct.outputs:renderProductPath",
+                    "WristRgbPublisher.inputs:renderProductPath",
+                ),
+                (
+                    "CreateWristCameraRenderProduct.outputs:renderProductPath",
+                    "WristDepthPublisher.inputs:renderProductPath",
+                ),
+                (
+                    "CreateWristCameraRenderProduct.outputs:renderProductPath",
+                    "WristCameraInfoPublisher.inputs:renderProductPath",
                 ),
                 ("Context.outputs:context", "PublishJointState.inputs:context"),
                 ("Context.outputs:context", "PublishClock.inputs:context"),
@@ -343,6 +393,36 @@ def main():
                 ("ScanPublisher.inputs:type", "laser_scan"),
                 ("ScanPublisher.inputs:useSystemTime", False),
                 ("ScanPublisher.inputs:resetSimulationTimeOnStop", True),
+                (
+                    "CreateWristCameraRenderProduct.inputs:cameraPrim",
+                    [
+                        usdrt.Sdf.Path(
+                            "/mobile_manipulator/wrist_camera_color_optical_frame/D455Camera"
+                        )
+                    ],
+                ),
+                ("CreateWristCameraRenderProduct.inputs:width", 640),
+                ("CreateWristCameraRenderProduct.inputs:height", 480),
+                ("WristRgbPublisher.inputs:topicName", "wrist_camera/color/image_raw"),
+                ("WristRgbPublisher.inputs:frameId", "wrist_camera_color_optical_frame"),
+                ("WristRgbPublisher.inputs:type", "rgb"),
+                ("WristRgbPublisher.inputs:useSystemTime", False),
+                ("WristRgbPublisher.inputs:resetSimulationTimeOnStop", True),
+                ("WristDepthPublisher.inputs:topicName", "wrist_camera/depth/image_rect_raw"),
+                ("WristDepthPublisher.inputs:frameId", "wrist_camera_color_optical_frame"),
+                ("WristDepthPublisher.inputs:type", "depth"),
+                ("WristDepthPublisher.inputs:useSystemTime", False),
+                ("WristDepthPublisher.inputs:resetSimulationTimeOnStop", True),
+                ("WristCameraInfoPublisher.inputs:topicName", "wrist_camera/color/camera_info"),
+                (
+                    "WristCameraInfoPublisher.inputs:frameId",
+                    "wrist_camera_color_optical_frame",
+                ),
+                ("WristCameraInfoPublisher.inputs:useSystemTime", False),
+                (
+                    "WristCameraInfoPublisher.inputs:resetSimulationTimeOnStop",
+                    True,
+                ),
             ],
         },
     )

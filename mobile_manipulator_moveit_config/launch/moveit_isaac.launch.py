@@ -11,6 +11,7 @@ from moveit_configs_utils import MoveItConfigsBuilder
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
+    use_robot_state_publisher = LaunchConfiguration("use_robot_state_publisher")
 
     moveit_config = (
         MoveItConfigsBuilder(
@@ -58,11 +59,13 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
+            DeclareLaunchArgument("use_robot_state_publisher", default_value="true"),
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
                 output="screen",
                 parameters=[moveit_config.robot_description, sim_time_parameter],
+                condition=IfCondition(use_robot_state_publisher),
             ),
             Node(
                 package="moveit_ros_move_group",

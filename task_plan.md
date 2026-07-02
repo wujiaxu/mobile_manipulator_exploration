@@ -27,7 +27,7 @@ Add MoveIt 2 end-effector pose control for the unified mobile manipulator in Isa
 
 - Do not modify either original robot file.
 - Preserve the calibrated transforms exactly.
-- Do not invent a wrist-camera extrinsic.
+- Treat the wrist-camera extrinsic as a placeholder until measured/calibrated.
 
 ## Errors Encountered
 

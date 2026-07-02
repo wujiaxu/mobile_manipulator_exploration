@@ -1025,6 +1025,357 @@ Next commands:
 ./start_controlled_rooms_navigation.sh
 ```
 
+## 2026-07-02 Wrist RGB-D Camera on End Effector
+
+Added a RealSense-D455-style wrist camera to the unified robot description and Isaac ROS overlay.
+
+Description changes:
+
+- `mobile_manipulator_description/urdf/mobile_manipulator.urdf.xacro`
+- Added fixed frames:
+  - `wrist_camera_link`
+  - `wrist_camera_color_optical_frame`
+- Parent joint:
+  - `link_eef_to_wrist_camera`
+  - parent: `link_eef`
+  - child: `wrist_camera_link`
+- Current mount transform is a placeholder, not calibrated:
+  - `wrist_camera_xyz="0.035 0 0.025"`
+  - `wrist_camera_rpy="0 0 0"`
+
+Isaac USD/ROS overlay changes:
+
+- `isaac_sim/scripts/import_mobile_manipulator.py`
+- Added USD camera prim:
+  - `/mobile_manipulator/wrist_camera_color_optical_frame/D455Camera`
+- Added ROS2 publishers:
+  - `/wrist_camera/color/image_raw`
+  - `/wrist_camera/depth/image_rect_raw`
+  - `/wrist_camera/color/camera_info`
+- Frame ID:
+  - `wrist_camera_color_optical_frame`
+- Resolution:
+  - `640x480`
+- Clipping range:
+  - `0.15 m` to `8.0 m`
+- Camera info now uses Isaac 4.5's dedicated:
+  - `isaacsim.ros2.bridge.ROS2CameraInfoHelper`
+
+Regenerated:
+
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator.usd`
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd`
+
+Runner changes:
+
+- `isaac_sim/scripts/run_factory_navigation.py`
+- The scene runner now verifies the baked wrist camera prim and RGB/depth/camera-info graph nodes before starting simulation.
+- Startup print now includes the wrist camera topics.
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  isaac_sim/scripts/run_factory_navigation.py \
+  isaac_sim/scripts/import_mobile_manipulator.py \
+  isaac_sim/tests/test_navigation_contract.py \
+  isaac_sim/tests/test_description_contract.py \
+  isaac_sim/tests/test_import_contract.py
+
+python3 -m unittest \
+  isaac_sim.tests.test_description_contract \
+  isaac_sim.tests.test_navigation_contract -v
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  -m unittest \
+  isaac_sim.tests.test_import_contract.GeneratedAssetTest \
+  isaac_sim.tests.test_import_contract.ImportedRobotContractTest.test_calibration_and_support_links_are_preserved \
+  isaac_sim.tests.test_import_contract.ImportedRobotContractTest.test_ros_overlay_has_wrist_rgbd_camera_publishers -v
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/run_factory_navigation.py \
+  --factory-usd isaac_sim/assets/environments/controlled_rooms/controlled_rooms.usd \
+  --robot-usd isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd \
+  --spawn -4.5 -4.5 0.6 0.0 \
+  --headless --duration 1
+```
+
+Next commands:
+
+```bash
+./start_controlled_rooms_mobile_manipulator.sh --use-moveit-rviz
+
+ros2 topic list | rg wrist_camera
+ros2 topic echo /wrist_camera/color/camera_info --once
+ros2 topic hz /wrist_camera/color/image_raw
+ros2 topic hz /wrist_camera/depth/image_rect_raw
+```
+
+## 2026-07-02 Wrist Camera Render Direction Fix
+
+Corrected the USD camera prim orientation while keeping the ROS optical frame unchanged.
+
+Reason:
+
+- ROS optical convention uses:
+  - `+Z` forward into the camera FOV
+  - `+X` image right
+  - `+Y` image down
+- USD cameras render along local `-Z`.
+
+Change:
+
+- `isaac_sim/scripts/import_mobile_manipulator.py`
+- The USD camera prim now has:
+  - `xformOp:rotateXYZ = (180.0, 0.0, 0.0)`
+- This maps USD camera render direction `-Z` to ROS optical `+Z`.
+- The published ROS frame remains:
+  - `wrist_camera_color_optical_frame`
+
+Regenerated:
+
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator.usd`
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd`
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  isaac_sim/scripts/import_mobile_manipulator.py \
+  isaac_sim/tests/test_import_contract.py
+
+USD_LIB=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/extscache/omni.usd.libs-1.0.1+d02c707b.lx64.r.cp310
+PYTHONPATH=$USD_LIB LD_LIBRARY_PATH=$USD_LIB/bin \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python - <<'PY'
+from pxr import Usd
+stage = Usd.Stage.Open('isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd')
+prim = stage.GetPrimAtPath('/mobile_manipulator/wrist_camera_color_optical_frame/D455Camera')
+print('camera_valid', prim.IsValid())
+attr = prim.GetAttribute('xformOp:rotateXYZ')
+print('rotate_valid', attr.IsValid())
+print('rotate', tuple(attr.Get()))
+PY
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/run_factory_navigation.py \
+  --factory-usd isaac_sim/assets/environments/controlled_rooms/controlled_rooms.usd \
+  --robot-usd isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd \
+  --spawn -4.5 -4.5 0.6 0.0 \
+  --headless --duration 1
+```
+
+## 2026-07-02 Wrist Camera Axis Alignment with End Effector
+
+Aligned the wrist camera frame with the manipulator end-effector frame.
+
+Requirement:
+
+- `wrist_camera_color_optical_frame` `+Z` should align with `link_eef` `+Z`.
+
+Description change:
+
+- `mobile_manipulator_description/urdf/mobile_manipulator.urdf.xacro`
+- `link_eef_to_wrist_camera` keeps:
+  - `wrist_camera_rpy="0 0 0"`
+- `wrist_camera_link_to_color_optical_frame` now uses an identity transform:
+  - `xyz="0 0 0"`
+  - `rpy="0 0 0"`
+
+Isaac convention:
+
+- Keep the USD camera prim rotation:
+  - `xformOp:rotateXYZ = (180.0, 0.0, 0.0)`
+- Reason: USD cameras render along local `-Z`, so this makes the rendered FOV
+  point along the ROS camera frame `+Z`, which is now aligned with `link_eef`
+  `+Z`.
+
+Regenerated:
+
+- `build/isaac_import/mobile_manipulator.urdf`
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator.usd`
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd`
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  isaac_sim/scripts/import_mobile_manipulator.py \
+  isaac_sim/scripts/run_factory_navigation.py \
+  isaac_sim/tests/test_description_contract.py \
+  isaac_sim/tests/test_import_contract.py
+
+python3 -m unittest isaac_sim.tests.test_description_contract -v
+
+sed -n '980,996p' build/isaac_import/mobile_manipulator.urdf
+
+USD_LIB=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/extscache/omni.usd.libs-1.0.1+d02c707b.lx64.r.cp310
+PYTHONPATH=$USD_LIB LD_LIBRARY_PATH=$USD_LIB/bin \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python -c \
+  "from pxr import Usd; stage = Usd.Stage.Open('isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd'); prim = stage.GetPrimAtPath('/mobile_manipulator/wrist_camera_color_optical_frame/D455Camera'); print('camera_valid', prim.IsValid()); attr = prim.GetAttribute('xformOp:rotateXYZ'); print('rotate_valid', attr.IsValid()); print('rotate', tuple(attr.Get()))"
+```
+
+## 2026-07-02 Point Goal Navigation and Manipulator Integration Branch
+
+Created working branch:
+
+```bash
+feature/point-goal-navigation-manipulator-control
+```
+
+Readiness:
+
+- Point-goal Nav2 navigation is ready to test with the existing controlled rooms
+  stack.
+- Manipulator pose-goal control already exists through MoveIt:
+  - target topic: `/arm_target_pose`
+  - message type: `geometry_msgs/msg/PoseStamped`
+  - planning frame: `base_link`
+  - end-effector link: `link_eef`
+- The remaining integration work was to start Nav2 and MoveIt together without
+  duplicate `robot_state_publisher` or duplicate RViz2 instances.
+
+Changes:
+
+- `mobile_manipulator_navigation/launch/mapping.launch.py`
+  - Added `use_robot_state_publisher` launch argument.
+- `mobile_manipulator_moveit_config/launch/moveit_isaac.launch.py`
+  - Added `use_robot_state_publisher` launch argument.
+- `start_controlled_rooms_mobile_manipulator.sh`
+  - Starts Isaac controlled rooms scene.
+  - Starts SLAM Toolbox, Nav2, and RViz2.
+  - Starts MoveIt, `isaac_trajectory_bridge`, and `pose_goal_planner`.
+  - Runs only one `robot_state_publisher`.
+  - Runs only the Nav2 RViz instance.
+- `send_arm_target_pose.sh`
+  - Publishes one `PoseStamped` target to `/arm_target_pose`.
+
+Rebuilt:
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-select \
+  mobile_manipulator_navigation \
+  mobile_manipulator_moveit_config
+```
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  mobile_manipulator_navigation/launch/mapping.launch.py \
+  mobile_manipulator_moveit_config/launch/moveit_isaac.launch.py
+
+bash -n \
+  start_controlled_rooms_mobile_manipulator.sh \
+  send_arm_target_pose.sh
+
+./start_controlled_rooms_mobile_manipulator.sh --dry-run
+
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export ROS_LOG_DIR=/tmp/ros-log
+ros2 launch mobile_manipulator_navigation mapping.launch.py --show-args
+ros2 launch mobile_manipulator_moveit_config moveit_isaac.launch.py --show-args
+
+timeout 8 ros2 launch mobile_manipulator_navigation mapping.launch.py \
+  use_rviz:=false \
+  use_sim_time:=true \
+  use_robot_state_publisher:=true
+
+timeout 8 ros2 launch mobile_manipulator_moveit_config moveit_isaac.launch.py \
+  use_rviz:=false \
+  use_sim_time:=true \
+  use_robot_state_publisher:=false
+```
+
+The timeout launch checks started the nodes successfully. Nav2 showed expected
+missing `odom` TF warnings when Isaac was not running. MoveIt reached:
+
+```text
+You can start planning now!
+```
+
+Next operator test:
+
+```bash
+./start_controlled_rooms_mobile_manipulator.sh
+```
+
+In RViz2:
+
+1. Drive/build the map if needed.
+2. Use `Nav2 Goal` to send a base point goal.
+3. After the base reaches the area, test arm pose control:
+
+```bash
+./send_arm_target_pose.sh 0.45 0.00 0.55 0.0 1.0 0.0 0.0 base_link
+```
+
+## 2026-07-02 MoveIt RViz GUI Option and Arm Target Script Fix
+
+Fixed:
+
+- `send_arm_target_pose.sh` no longer fails on ROS setup with:
+  - `AMENT_TRACE_SETUP_FILES: unbound variable`
+- Root cause was `set -u` in the helper while sourcing ROS setup files that
+  reference optional unset variables.
+- The script now temporarily disables nounset while sourcing:
+  - `/opt/ros/humble/setup.bash`
+  - `install/setup.bash`
+- The script also bounds the wait for a `/arm_target_pose` subscriber with:
+  - `ARM_TARGET_WAIT_SECONDS`, default `10`
+
+Added:
+
+- `start_controlled_rooms_mobile_manipulator.sh --use-moveit-rviz`
+
+This starts the same integrated stack, but also launches MoveIt RViz for GUI arm
+target control. It does not start a duplicate MoveIt backend; it only changes the
+MoveIt launch argument:
+
+```bash
+use_rviz:=true
+```
+
+Next GUI manipulation test:
+
+```bash
+./start_controlled_rooms_mobile_manipulator.sh --use-moveit-rviz
+```
+
+Expected windows:
+
+- Nav2 RViz for map and base point-goal navigation.
+- MoveIt RViz for interactive manipulator pose targets.
+
+Command-line pose target test remains:
+
+```bash
+./send_arm_target_pose.sh 0.45 0.00 0.55 0.0 1.0 0.0 0.0 base_link
+```
+
+Verified:
+
+```bash
+bash -n send_arm_target_pose.sh start_controlled_rooms_mobile_manipulator.sh
+./start_controlled_rooms_mobile_manipulator.sh --use-moveit-rviz --dry-run
+ARM_TARGET_WAIT_SECONDS=2 ./send_arm_target_pose.sh \
+  0.45 0.00 0.55 0.0 1.0 0.0 0.0 base_link
+```
+
+The last command was run without the integrated stack; it no longer fails during
+ROS setup and exits after the bounded wait because no `pose_goal_planner`
+subscriber is running in that isolated check.
+
 ## 2026-07-01 Baked LiDAR USD Render Product Fix
 
 Current robot USD behavior:

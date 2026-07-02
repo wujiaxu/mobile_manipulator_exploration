@@ -12,6 +12,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
+    use_robot_state_publisher = LaunchConfiguration("use_robot_state_publisher")
     nav_share = FindPackageShare("mobile_manipulator_navigation")
     description_share = FindPackageShare("mobile_manipulator_description")
     nav2_params = PathJoinSubstitution([nav_share, "config", "nav2_params.yaml"])
@@ -30,11 +31,13 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
+            DeclareLaunchArgument("use_robot_state_publisher", default_value="true"),
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
                 output="screen",
                 parameters=[robot_description, {"use_sim_time": use_sim_time}],
+                condition=IfCondition(use_robot_state_publisher),
             ),
             Node(
                 package="slam_toolbox",

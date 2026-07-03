@@ -196,10 +196,12 @@ class NavigationLauncherContract(unittest.TestCase):
         source = LAUNCHER.read_text(encoding="utf-8")
         for required in (
             "--dry-run",
+            "--use-wrist-octomap",
             "rmw_fastrtps_cpp",
             "rmw_cyclonedds_cpp",
             "run_factory_navigation.py",
             "mapping.launch.py",
+            "wrist_octomap.launch.py",
             "setsid",
             "trap cleanup INT TERM EXIT",
         ):

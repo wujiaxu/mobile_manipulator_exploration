@@ -14,6 +14,7 @@ ISAAC_STARTUP_WAIT_SECONDS="${ISAAC_STARTUP_WAIT_SECONDS:-15}"
 
 isaac_pid=""
 navigation_pid=""
+octomap_pid=""
 cleaning_up=0
 
 fail() {
@@ -54,14 +55,37 @@ cleanup() {
   fi
   cleaning_up=1
   set +e
+  stop_process_group "$octomap_pid" "Wrist OctoMap"
   stop_process_group "$navigation_pid" "SLAM/Nav2/RViz"
   stop_process_group "$isaac_pid" "Isaac Sim"
+  wait "$octomap_pid" 2>/dev/null || true
   wait "$navigation_pid" 2>/dev/null || true
   wait "$isaac_pid" 2>/dev/null || true
   return "$status"
 }
 
 trap cleanup INT TERM EXIT
+
+use_wrist_octomap=false
+dry_run=0
+while (($#)); do
+  case "$1" in
+    --dry-run)
+      dry_run=1
+      ;;
+    --use-wrist-octomap|use_wrist_octomap:=true)
+      use_wrist_octomap=true
+      ;;
+    -h|--help)
+      printf 'Usage: %s [--use-wrist-octomap] [--dry-run]\n' "$0"
+      exit 0
+      ;;
+    *)
+      fail "usage: $0 [--use-wrist-octomap] [--dry-run]"
+      ;;
+  esac
+  shift
+done
 
 require_file "$ROS_SETUP"
 require_file "$WORKSPACE_SETUP"
@@ -84,15 +108,18 @@ isaac_command=(
 )
 
 navigation_shell_command="source '${ROS_SETUP}'; source '${WORKSPACE_SETUP}'; export ROS_LOG_DIR='${ROS_LOG_DIR}' RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec ros2 launch mobile_manipulator_navigation mapping.launch.py use_rviz:=true use_sim_time:=true"
+octomap_shell_command="source '${ROS_SETUP}'; source '${WORKSPACE_SETUP}'; export ROS_LOG_DIR='${ROS_LOG_DIR}' RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec ros2 launch mobile_manipulator_navigation wrist_octomap.launch.py use_sim_time:=true"
 
-if [[ "${1:-}" == "--dry-run" ]]; then
+if ((dry_run)); then
   printf 'Isaac navigation command:'
   printf ' %q' "${isaac_command[@]}"
   printf '\nROS navigation command: bash -lc %q\n' "$navigation_shell_command"
+  if [[ "$use_wrist_octomap" == true ]]; then
+    printf 'Wrist OctoMap command: bash -lc %q\n' "$octomap_shell_command"
+  fi
   exit 0
 fi
 
-[[ $# -eq 0 ]] || fail "usage: $0 [--dry-run]"
 [[ "$ISAAC_STARTUP_WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] || \
   fail "ISAAC_STARTUP_WAIT_SECONDS must be a positive integer"
 
@@ -113,13 +140,25 @@ printf 'Press Ctrl+C to stop the complete navigation stack.\n'
 setsid bash -lc "$navigation_shell_command" &
 navigation_pid=$!
 
+if [[ "$use_wrist_octomap" == true ]]; then
+  printf 'Starting wrist depth OctoMap in map frame...\n'
+  setsid bash -lc "$octomap_shell_command" &
+  octomap_pid=$!
+fi
+
 set +e
-wait -n "$isaac_pid" "$navigation_pid"
+if [[ "$use_wrist_octomap" == true ]]; then
+  wait -n "$isaac_pid" "$navigation_pid" "$octomap_pid"
+else
+  wait -n "$isaac_pid" "$navigation_pid"
+fi
 status=$?
 set -e
 
 if ! kill -0 "$isaac_pid" 2>/dev/null; then
   printf 'Isaac Sim exited; stopping SLAM/Nav2/RViz.\n' >&2
+elif [[ "$use_wrist_octomap" == true ]] && ! kill -0 "$octomap_pid" 2>/dev/null; then
+  printf 'Wrist OctoMap exited; stopping remaining processes.\n' >&2
 else
   printf 'SLAM/Nav2/RViz exited; stopping Isaac Sim.\n' >&2
 fi

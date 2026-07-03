@@ -17,6 +17,7 @@ ROBOT_SPAWN=(-4.5 -4.5 0.6 0.0)
 isaac_pid=""
 navigation_pid=""
 moveit_pid=""
+octomap_pid=""
 cleaning_up=0
 
 fail() {
@@ -34,6 +35,8 @@ and the Isaac arm trajectory bridge.
 Options:
   --use-moveit-rviz  Also start MoveIt RViz for GUI arm pose targets.
                      This opens a second RViz window in addition to Nav2 RViz.
+  --use-wrist-octomap
+                     Build a map-frame OctoMap from the wrist depth camera.
   --dry-run          Print the commands without starting processes.
 EOF
 }
@@ -71,9 +74,11 @@ cleanup() {
   fi
   cleaning_up=1
   set +e
+  stop_process_group "$octomap_pid" "Wrist OctoMap"
   stop_process_group "$moveit_pid" "MoveIt"
   stop_process_group "$navigation_pid" "SLAM/Nav2/RViz"
   stop_process_group "$isaac_pid" "Isaac Sim"
+  wait "$octomap_pid" 2>/dev/null || true
   wait "$moveit_pid" 2>/dev/null || true
   wait "$navigation_pid" 2>/dev/null || true
   wait "$isaac_pid" 2>/dev/null || true
@@ -84,6 +89,7 @@ trap cleanup INT TERM EXIT
 
 dry_run=0
 use_moveit_rviz=false
+use_wrist_octomap=false
 while (($#)); do
   case "$1" in
     --dry-run)
@@ -91,6 +97,9 @@ while (($#)); do
       ;;
     --use-moveit-rviz|use_moveit_rviz:=true)
       use_moveit_rviz=true
+      ;;
+    --use-wrist-octomap|use_wrist_octomap:=true)
+      use_wrist_octomap=true
       ;;
     -h|--help)
       usage
@@ -127,12 +136,16 @@ isaac_command=(
 
 navigation_shell_command="source '${ROS_SETUP}'; source '${WORKSPACE_SETUP}'; export ROS_LOG_DIR='${ROS_LOG_DIR}' RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec ros2 launch mobile_manipulator_navigation mapping.launch.py use_rviz:=true use_sim_time:=true use_robot_state_publisher:=true"
 moveit_shell_command="source '${ROS_SETUP}'; source '${WORKSPACE_SETUP}'; export ROS_LOG_DIR='${ROS_LOG_DIR}' RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec ros2 launch mobile_manipulator_moveit_config moveit_isaac.launch.py use_rviz:=${use_moveit_rviz} use_sim_time:=true use_robot_state_publisher:=false"
+octomap_shell_command="source '${ROS_SETUP}'; source '${WORKSPACE_SETUP}'; export ROS_LOG_DIR='${ROS_LOG_DIR}' RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec ros2 launch mobile_manipulator_navigation wrist_octomap.launch.py use_sim_time:=true"
 
 if ((dry_run)); then
   printf 'Isaac command:'
   printf ' %q' "${isaac_command[@]}"
   printf '\nNavigation command: bash -lc %q\n' "$navigation_shell_command"
   printf 'MoveIt command: bash -lc %q\n' "$moveit_shell_command"
+  if [[ "$use_wrist_octomap" == true ]]; then
+    printf 'Wrist OctoMap command: bash -lc %q\n' "$octomap_shell_command"
+  fi
   exit 0
 fi
 
@@ -176,8 +189,18 @@ printf 'Press Ctrl+C to stop the complete stack.\n'
 setsid bash -lc "$moveit_shell_command" &
 moveit_pid=$!
 
+if [[ "$use_wrist_octomap" == true ]]; then
+  printf 'Starting wrist depth OctoMap in map frame...\n'
+  setsid bash -lc "$octomap_shell_command" &
+  octomap_pid=$!
+fi
+
 set +e
-wait -n "$isaac_pid" "$navigation_pid" "$moveit_pid"
+if [[ "$use_wrist_octomap" == true ]]; then
+  wait -n "$isaac_pid" "$navigation_pid" "$moveit_pid" "$octomap_pid"
+else
+  wait -n "$isaac_pid" "$navigation_pid" "$moveit_pid"
+fi
 status=$?
 set -e
 
@@ -185,6 +208,8 @@ if ! kill -0 "$isaac_pid" 2>/dev/null; then
   printf 'Isaac Sim exited; stopping ROS stacks.\n' >&2
 elif ! kill -0 "$navigation_pid" 2>/dev/null; then
   printf 'SLAM/Nav2/RViz exited; stopping remaining processes.\n' >&2
+elif [[ "$use_wrist_octomap" == true ]] && ! kill -0 "$octomap_pid" 2>/dev/null; then
+  printf 'Wrist OctoMap exited; stopping remaining processes.\n' >&2
 else
   printf 'MoveIt exited; stopping remaining processes.\n' >&2
 fi

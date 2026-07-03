@@ -228,6 +228,16 @@ class ImportedRobotContractTest(unittest.TestCase):
         rotate = camera.GetAttribute("xformOp:rotateXYZ")
         self.assertTrue(rotate.IsValid())
         self.assertEqual(tuple(rotate.Get()), (180.0, 0.0, 0.0))
+        focal_length = camera.GetAttribute("focalLength").Get()
+        horizontal_aperture = camera.GetAttribute("horizontalAperture").Get()
+        vertical_aperture = camera.GetAttribute("verticalAperture").Get()
+        horizontal_offset = camera.GetAttribute("horizontalApertureOffset").Get()
+        vertical_offset = camera.GetAttribute("verticalApertureOffset").Get()
+        self.assertAlmostEqual(focal_length, 2.0, places=6)
+        self.assertAlmostEqual(horizontal_aperture, 848.0 * 2.0 / 429.0, places=6)
+        self.assertAlmostEqual(vertical_aperture, 480.0 * 2.0 / 427.0, places=6)
+        self.assertAlmostEqual(horizontal_offset, (425.0 - 848.0 / 2.0) / 429.0, places=6)
+        self.assertAlmostEqual(vertical_offset, 0.0, places=6)
         for name in (
             "CreateWristCameraRenderProduct",
             "WristRgbPublisher",
@@ -245,7 +255,7 @@ class ImportedRobotContractTest(unittest.TestCase):
             "cameraPrim",
             [f"{ROBOT_PATH}/wrist_camera_color_optical_frame/D455Camera"],
         )
-        self.assert_input(render_product, "width", 640)
+        self.assert_input(render_product, "width", 848)
         self.assert_input(render_product, "height", 480)
         self.assert_input(rgb, "topicName", "wrist_camera/color/image_raw")
         self.assert_input(rgb, "frameId", "wrist_camera_color_optical_frame")

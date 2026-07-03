@@ -4,13 +4,17 @@
 
 Add MoveIt 2 end-effector pose control for the unified mobile manipulator in Isaac Sim 4.5.
 
-## Current Milestone: Nav2 Prerequisites
+## Current Milestone: Map-Frame Wrist OctoMap for Exploration
 
 - [x] Inspect current Isaac ROS topics, installed Nav2 packages, and sensor extensions.
 - [x] Select online SLAM Toolbox with a temporary 360-degree 2D LiDAR.
 - [x] Write and approve the Nav2 prerequisite design.
 - [ ] Implement odometry and range sensing in Isaac Sim (USD contracts and runner complete; live topic verification pending).
 - [x] Add and validate Nav2 configuration.
+- [x] Add wrist depth image to `PointCloud2` conversion.
+- [x] Add a project-owned OctoMap node that integrates wrist depth clouds in `map`.
+- [x] Add RViz displays for wrist depth image, z-colored depth points, and z-colored occupied OctoMap voxels.
+- [ ] Live-verify `/octomap_binary` while Isaac, SLAM Toolbox, and wrist depth topics are running.
 
 ## Phases
 
@@ -28,6 +32,7 @@ Add MoveIt 2 end-effector pose control for the unified mobile manipulator in Isa
 - Do not modify either original robot file.
 - Preserve the calibrated transforms exactly.
 - Treat the wrist-camera extrinsic as a placeholder until measured/calibrated.
+- Exploration 3D occupancy must use fixed frame `map`, not `base_link`.
 
 ## Errors Encountered
 
@@ -60,3 +65,5 @@ Add MoveIt 2 end-effector pose control for the unified mobile manipulator in Isa
 - The isolated Isaac unittest invocation stalled for more than four minutes during startup/output buffering and was terminated. Diagnose the authored USD directly with PXR instead of repeating the same full-app test.
 - The first live factory run reached Isaac's `Simulation App Startup Complete`, but the already stale host ROS/process state wedged direct Cyclone DDS probes, `pgrep`, and even external timeout teardown. The deterministic factory and robot USD suites still pass; retry live sensor/odometry validation after a clean host restart.
 - The factory runner initially passed a graph descriptor dictionary to `Controller.edit`, which always creates a graph and failed because `/ActionGraph` came from the robot USD. After switching to the existing graph handle, the pre-existing tick node also required its absolute attribute path. Both issues are covered by a regression contract and a live bounded Isaac run.
+- The installed MoveIt occupancy map monitor package provides `moveit_ros_occupancy_map_server`, but this host does not expose the normal point-cloud updater plugin XML. A project-owned OctoMap node is used for the exploration map instead of depending on MoveIt-only map monitoring.
+- The host does not have `octomap_rviz_plugins`, so RViz cannot natively display `octomap_msgs/msg/Octomap`. The project publishes `/octomap_occupied_points` as an RViz-compatible occupied-voxel `PointCloud2` visualization topic.

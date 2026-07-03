@@ -1553,3 +1553,296 @@ Next commands:
 # Full Isaac + SLAM/Nav2/RViz test
 ./start_controlled_rooms_navigation.sh
 ```
+
+## 2026-07-02 Map-Frame Wrist Depth OctoMap
+
+Added a project-owned OctoMap pipeline for exploration using the wrist depth camera.
+
+Reason:
+
+- Exploration needs a persistent 3D occupancy map in fixed frame `map`.
+- A MoveIt-only OctoMap in `base_link` is not suitable for exploration because it moves with the robot.
+- The installed MoveIt occupancy-map server exists, but this host does not expose the normal point-cloud updater plugin XML, so the first reliable implementation is a small local node.
+
+Pipeline:
+
+- `depth_image_proc/point_cloud_xyz_node`
+  - input image: `/wrist_camera/depth/image_rect_raw`
+  - input camera info: `/wrist_camera/color/camera_info`
+  - output cloud: `/wrist_camera/depth/points`
+- `mobile_manipulator_navigation/wrist_depth_octomap_node`
+  - input cloud: `/wrist_camera/depth/points`
+  - fixed frame: `map`
+  - output: `/octomap_binary`
+  - type: `octomap_msgs/msg/Octomap`
+
+Files added/changed:
+
+- `mobile_manipulator_navigation/src/wrist_depth_octomap_node.cpp`
+- `mobile_manipulator_navigation/config/wrist_octomap.yaml`
+- `mobile_manipulator_navigation/launch/wrist_octomap.launch.py`
+- `mobile_manipulator_navigation/CMakeLists.txt`
+- `mobile_manipulator_navigation/package.xml`
+- `start_navigation_test.sh`
+- `start_controlled_rooms_mobile_manipulator.sh`
+- `isaac_sim/tests/test_wrist_octomap_contract.py`
+- `isaac_sim/tests/test_navigation_contract.py`
+
+Important configuration:
+
+```yaml
+wrist_depth_octomap:
+  ros__parameters:
+    map_frame: map
+    cloud_topic: /wrist_camera/depth/points
+    octomap_topic: /octomap_binary
+    resolution: 0.05
+    max_range: 3.0
+```
+
+Run with the complete integrated stack:
+
+```bash
+./start_controlled_rooms_mobile_manipulator.sh --use-wrist-octomap
+```
+
+Useful checks while the stack is running:
+
+```bash
+ros2 topic hz /wrist_camera/depth/points
+ros2 topic echo /octomap_binary --once
+ros2 topic info /octomap_binary --verbose
+ros2 run tf2_ros tf2_echo map wrist_camera_color_optical_frame
+```
+
+Prerequisite:
+
+- SLAM Toolbox must already publish `map -> odom`.
+- Isaac must publish `odom -> base_link`.
+- Robot TF must connect `base_link -> ... -> wrist_camera_color_optical_frame`.
+
+Verified:
+
+```bash
+python3 -m unittest \
+  isaac_sim.tests.test_wrist_octomap_contract \
+  isaac_sim.tests.test_navigation_contract -v
+
+python3 -m py_compile \
+  mobile_manipulator_navigation/launch/wrist_octomap.launch.py \
+  isaac_sim/tests/test_wrist_octomap_contract.py
+
+source /opt/ros/humble/setup.bash
+colcon build --packages-select mobile_manipulator_navigation \
+  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+
+source install/setup.bash
+ros2 launch mobile_manipulator_navigation wrist_octomap.launch.py --show-args
+
+bash -n start_navigation_test.sh start_controlled_rooms_mobile_manipulator.sh
+
+./start_navigation_test.sh --use-wrist-octomap --dry-run
+./start_controlled_rooms_mobile_manipulator.sh --use-wrist-octomap --dry-run
+
+timeout 6 ros2 launch mobile_manipulator_navigation wrist_octomap.launch.py \
+  use_sim_time:=true
+```
+
+## 2026-07-02 Wrist Camera Intrinsics Update
+
+Updated the baked Isaac wrist RGB-D camera to reduce FOV and match the requested
+resolution/intrinsic model as closely as Isaac's camera-info helper allows.
+
+Requested model:
+
+```text
+width = 848
+height = 480
+K = [[429, 0, 425],
+     [0, 427, 240],
+     [0, 0, 1]]
+```
+
+Changed:
+
+- `isaac_sim/scripts/import_mobile_manipulator.py`
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator.usd`
+- `isaac_sim/assets/robots/mobile_manipulator/mobile_manipulator_ros.usd`
+
+Camera USD settings:
+
+```text
+focalLength = 2.0
+horizontalAperture = 848 * 2.0 / 429 = 3.953379953
+verticalAperture = 480 * 2.0 / 427 = 2.248243560
+horizontalApertureOffset = (425 - 848 / 2) / 429 = 0.002331002
+verticalApertureOffset = 0.0
+```
+
+Render product:
+
+```text
+CreateWristCameraRenderProduct.inputs:width = 848
+CreateWristCameraRenderProduct.inputs:height = 480
+```
+
+Depth/color alignment:
+
+- RGB, depth, and camera-info publishers all consume the same render product:
+  - `/ActionGraph/CreateWristCameraRenderProduct.outputs:renderProductPath`
+- Topics remain:
+  - `/wrist_camera/color/image_raw`
+  - `/wrist_camera/depth/image_rect_raw`
+  - `/wrist_camera/color/camera_info`
+
+Important caveat:
+
+- Isaac 4.5's `ROS2CameraInfoHelper` computes centered principal point in its
+  own test coverage:
+  - `cx = width * 0.5`
+  - `cy = height * 0.5`
+- The USD camera now stores the requested offset for `cx=425`, but if runtime
+  `/wrist_camera/color/camera_info` still reports `cx=424`, use a small custom
+  `CameraInfo` publisher in the next step to force the exact matrix.
+
+Runtime check:
+
+```bash
+ros2 topic echo /wrist_camera/color/camera_info --once
+ros2 topic echo /wrist_camera/color/image_raw --once | rg 'height|width'
+ros2 topic echo /wrist_camera/depth/image_rect_raw --once | rg 'height|width'
+```
+
+Expected image sizes:
+
+```text
+height: 480
+width: 848
+```
+
+Expected CameraInfo if Isaac honors the USD offset:
+
+```text
+k: [429.0, 0.0, 425.0, 0.0, 427.0, 240.0, 0.0, 0.0, 1.0]
+```
+
+Expected CameraInfo if Isaac ignores the USD offset:
+
+```text
+k: [429.0, 0.0, 424.0, 0.0, 427.0, 240.0, 0.0, 0.0, 1.0]
+```
+
+Verified:
+
+```bash
+python3 -m py_compile \
+  isaac_sim/scripts/import_mobile_manipulator.py \
+  isaac_sim/tests/test_import_contract.py \
+  isaac_sim/tests/test_navigation_contract.py
+
+python3 -m unittest \
+  isaac_sim.tests.test_navigation_contract.FactoryNavigationRunnerContract -v
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python \
+  isaac_sim/scripts/import_mobile_manipulator.py
+
+env ROS_DISTRO=humble RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  LD_LIBRARY_PATH=/home/user/anaconda3/envs/env_isaaclab/lib/python3.10/site-packages/isaacsim/exts/isaacsim.ros2.bridge/humble/lib:${LD_LIBRARY_PATH:-} \
+  PYTHONUNBUFFERED=1 timeout 60 \
+  /home/user/anaconda3/envs/env_isaaclab/bin/python -m unittest \
+  isaac_sim.tests.test_import_contract.ImportedRobotContractTest.test_ros_overlay_has_wrist_rgbd_camera_publishers -v
+```
+
+## 2026-07-03 RViz Wrist Depth and OctoMap Visualization
+
+Problem:
+
+- `/octomap_binary` can be echoed from the command line, but it does not appear
+  as a normal RViz map topic.
+- Root cause: `/octomap_binary` is `octomap_msgs/msg/Octomap`, not
+  `nav_msgs/msg/OccupancyGrid`.
+- This host has `octomap` and `octomap_msgs`, but not `octomap_rviz_plugins`,
+  so RViz cannot natively show the binary OctoMap with the regular Map display.
+
+Changes:
+
+- `mobile_manipulator_navigation/src/wrist_depth_octomap_node.cpp`
+  - Keeps publishing the algorithmic OctoMap:
+    - `/octomap_binary`
+    - type: `octomap_msgs/msg/Octomap`
+    - frame: `map`
+  - Also publishes an RViz-compatible occupied voxel cloud:
+    - `/octomap_occupied_points`
+    - type: `sensor_msgs/msg/PointCloud2`
+    - frame: `map`
+    - points are occupied leaf centers from the OctoMap.
+- `mobile_manipulator_navigation/config/wrist_octomap.yaml`
+  - Added:
+    - `occupied_cloud_topic: /octomap_occupied_points`
+- `mobile_manipulator_navigation/config/navigation.rviz`
+  - Added `Wrist Depth Image`:
+    - topic: `/wrist_camera/depth/image_rect_raw`
+  - Added `Wrist Depth Points`:
+    - topic: `/wrist_camera/depth/points`
+    - display: `PointCloud2`
+    - color transformer: `AxisColor`
+    - axis: `Z`
+  - Added `Wrist OctoMap Occupied Voxels`:
+    - topic: `/octomap_occupied_points`
+    - display: `PointCloud2`
+    - color transformer: `AxisColor`
+    - axis: `Z`
+
+Runtime command:
+
+```bash
+./start_controlled_rooms_mobile_manipulator.sh --use-wrist-octomap
+```
+
+or:
+
+```bash
+./start_navigation_test.sh --use-wrist-octomap
+```
+
+RViz check:
+
+- Fixed Frame: `map`
+- Displays should include:
+  - `Wrist Depth Image`
+  - `Wrist Depth Points`
+  - `Wrist OctoMap Occupied Voxels`
+
+Topic checks:
+
+```bash
+ros2 topic hz /wrist_camera/depth/image_rect_raw
+ros2 topic hz /wrist_camera/depth/points
+ros2 topic echo /octomap_binary --once
+ros2 topic hz /octomap_occupied_points
+ros2 topic info /octomap_occupied_points --verbose
+```
+
+If `/octomap_binary` exists but occupied voxels are empty:
+
+- Move the wrist camera so the depth image sees nearby geometry.
+- Confirm `map -> wrist_camera_color_optical_frame` TF exists.
+- Check `min_z`, `max_z`, and `max_range` in
+  `mobile_manipulator_navigation/config/wrist_octomap.yaml`.
+
+Verified:
+
+```bash
+python3 -m unittest isaac_sim.tests.test_wrist_octomap_contract -v
+
+python3 -m py_compile \
+  mobile_manipulator_navigation/launch/wrist_octomap.launch.py \
+  isaac_sim/tests/test_wrist_octomap_contract.py
+
+source /opt/ros/humble/setup.bash
+colcon build --packages-select mobile_manipulator_navigation \
+  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+```

@@ -122,3 +122,15 @@
 - Added executable `start_teleop.sh` for keyboard driving through `teleop_twist_keyboard` on `/cmd_vel`; syntax and dry-run checks pass.
 - Removed Slam Toolbox launch ambiguity by changing `mapping.launch.py` to start `slam_toolbox/async_slam_toolbox_node` directly with the project `slam_toolbox.yaml`, which uses `base_frame: base_link`; rebuilt `mobile_manipulator_navigation` and updated the navigation contract to reject fallback to the default `mapper_params_online_async.yaml`.
 - Confirmed the live Slam Toolbox process uses `base_link` and `/scan`, while `/scan` runs around 50 Hz and required odom/LiDAR TFs exist. The remaining map-TF blocker is Slam Toolbox dropping every `livox_frame` scan because its message filter queue fills. Tuned SLAM parameters with `scan_queue_size: 200`, `throttle_scans: 5`, `transform_timeout: 1.0`, and rebuilt `mobile_manipulator_navigation`.
+
+## 2026-07-02
+
+- Added a map-frame wrist depth OctoMap pipeline for exploration.
+- Created `mobile_manipulator_navigation/src/wrist_depth_octomap_node.cpp`, which subscribes to `/wrist_camera/depth/points`, transforms clouds into `map`, inserts them into an `octomap::OcTree`, and publishes `/octomap_binary`.
+- Added `mobile_manipulator_navigation/launch/wrist_octomap.launch.py` to convert `/wrist_camera/depth/image_rect_raw` plus `/wrist_camera/color/camera_info` into `/wrist_camera/depth/points` using `depth_image_proc/point_cloud_xyz_node`, then start the OctoMap node.
+- Added `mobile_manipulator_navigation/config/wrist_octomap.yaml` with `map_frame: map`, `resolution: 0.05`, and `max_range: 3.0`.
+- Added optional `--use-wrist-octomap` support to `start_navigation_test.sh` and `start_controlled_rooms_mobile_manipulator.sh`.
+- Verified the new contracts, package build, launch argument loading, shell syntax, dry-runs, and bounded ROS startup outside the sandbox.
+- Updated the baked Isaac wrist camera to `848x480` with USD intrinsics derived from `fx=429`, `fy=427`, `cx=425`, `cy=240`; regenerated both robot USD assets and verified the Isaac import contract.
+- Added RViz visualization for the wrist depth image, z-colored wrist depth point cloud, and a z-colored occupied-voxel cloud derived from the map-frame OctoMap.
+- Added `/octomap_occupied_points` because this host has `octomap_msgs` but not `octomap_rviz_plugins`; RViz can show the occupied voxels with the default `PointCloud2` display while `/octomap_binary` remains available for algorithms.

@@ -4,6 +4,27 @@ import os
 from pathlib import Path
 
 
+WRIST_CAMERA_WIDTH = 848
+WRIST_CAMERA_HEIGHT = 480
+WRIST_CAMERA_FX = 429.0
+WRIST_CAMERA_FY = 427.0
+WRIST_CAMERA_CX = 425.0
+WRIST_CAMERA_CY = 240.0
+WRIST_CAMERA_FOCAL_LENGTH = 2.0
+WRIST_CAMERA_HORIZONTAL_APERTURE = (
+    WRIST_CAMERA_WIDTH * WRIST_CAMERA_FOCAL_LENGTH / WRIST_CAMERA_FX
+)
+WRIST_CAMERA_VERTICAL_APERTURE = (
+    WRIST_CAMERA_HEIGHT * WRIST_CAMERA_FOCAL_LENGTH / WRIST_CAMERA_FY
+)
+WRIST_CAMERA_HORIZONTAL_APERTURE_OFFSET = (
+    (WRIST_CAMERA_CX - WRIST_CAMERA_WIDTH / 2.0) / WRIST_CAMERA_FX
+)
+WRIST_CAMERA_VERTICAL_APERTURE_OFFSET = (
+    (WRIST_CAMERA_CY - WRIST_CAMERA_HEIGHT / 2.0) / WRIST_CAMERA_FY
+)
+
+
 def parse_args():
     workspace = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(
@@ -154,9 +175,11 @@ def main():
     # USD cameras look along local -Z. Rotate the prim so its rendered FOV
     # points along ROS optical +Z while the published frame remains optical.
     UsdGeom.XformCommonAPI(camera.GetPrim()).SetRotate((180.0, 0.0, 0.0))
-    camera.CreateHorizontalApertureAttr(21.0)
-    camera.CreateVerticalApertureAttr(15.75)
-    camera.CreateFocalLengthAttr(2.0)
+    camera.CreateHorizontalApertureAttr(WRIST_CAMERA_HORIZONTAL_APERTURE)
+    camera.CreateVerticalApertureAttr(WRIST_CAMERA_VERTICAL_APERTURE)
+    camera.CreateHorizontalApertureOffsetAttr(WRIST_CAMERA_HORIZONTAL_APERTURE_OFFSET)
+    camera.CreateVerticalApertureOffsetAttr(WRIST_CAMERA_VERTICAL_APERTURE_OFFSET)
+    camera.CreateFocalLengthAttr(WRIST_CAMERA_FOCAL_LENGTH)
     camera.CreateClippingRangeAttr(Gf.Vec2f(0.15, 8.0))
     simulation_app.update()
 
@@ -401,8 +424,8 @@ def main():
                         )
                     ],
                 ),
-                ("CreateWristCameraRenderProduct.inputs:width", 640),
-                ("CreateWristCameraRenderProduct.inputs:height", 480),
+                ("CreateWristCameraRenderProduct.inputs:width", WRIST_CAMERA_WIDTH),
+                ("CreateWristCameraRenderProduct.inputs:height", WRIST_CAMERA_HEIGHT),
                 ("WristRgbPublisher.inputs:topicName", "wrist_camera/color/image_raw"),
                 ("WristRgbPublisher.inputs:frameId", "wrist_camera_color_optical_frame"),
                 ("WristRgbPublisher.inputs:type", "rgb"),

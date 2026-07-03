@@ -30,6 +30,29 @@ Visualization Manager:
         Value: /scan
       Size (Pixels): 3
       Style: Points
+    - Class: rviz_default_plugins/Image
+      Name: Wrist Depth Image
+      Enabled: true
+      Topic:
+        Value: /wrist_camera/depth/image_rect_raw
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Wrist Depth Points
+      Enabled: true
+      Topic:
+        Value: /wrist_camera/depth/points
+      Color Transformer: AxisColor
+      Axis: Z
+      Size (Pixels): 2
+      Style: Points
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Wrist OctoMap Occupied Voxels
+      Enabled: true
+      Topic:
+        Value: /octomap_occupied_points
+      Color Transformer: AxisColor
+      Axis: Z
+      Size (Pixels): 3
+      Style: Boxes
     - Class: rviz_default_plugins/Map
       Name: Global Costmap
       Enabled: true

@@ -1846,3 +1846,315 @@ source /opt/ros/humble/setup.bash
 colcon build --packages-select mobile_manipulator_navigation \
   --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
 ```
+
+## 2026-07-03 FKIE NBV Prep: Probabilistic OctoMap Outputs
+
+Goal:
+
+- Prepare the current mapping branch for the later FKIE NBV-compatible branch.
+- Do only the agreed OctoMap interface changes before merging this branch:
+  1. publish a probabilistic full OctoMap,
+  2. keep the wrist depth cloud available under an FKIE-style topic alias,
+  3. publish the wrist camera pose in the world/map frame.
+
+Changes:
+
+- `mobile_manipulator_navigation/src/wrist_depth_octomap_node.cpp`
+  - Publishes full probabilistic OctoMap:
+    - topic: `/octomap_full`
+    - type: `octomap_msgs/msg/Octomap`
+    - serialization: `octomap_msgs::fullMapToMsg`
+    - `binary: false`
+    - frame: `map`
+  - Keeps binary OctoMap compatibility:
+    - topic: `/octomap_binary`
+    - type: `octomap_msgs/msg/Octomap`
+    - serialization: `octomap_msgs::binaryMapToMsg`
+    - frame: `map`
+  - Keeps RViz occupied voxel cloud:
+    - topic: `/octomap_occupied_points`
+    - type: `sensor_msgs/msg/PointCloud2`
+    - frame: `map`
+  - Adds FKIE-style depth cloud alias:
+    - source: `/wrist_camera/depth/points`
+    - alias topic: `/realsense/depth/points2`
+    - type: `sensor_msgs/msg/PointCloud2`
+  - Adds camera pose publisher:
+    - topic: `/camera_pose`
+    - type: `geometry_msgs/msg/PoseStamped`
+    - frame: `map`
+    - pose source: TF lookup `map -> wrist_camera_color_optical_frame`
+
+- `mobile_manipulator_navigation/config/wrist_octomap.yaml`
+  - Added:
+    - `camera_frame: wrist_camera_color_optical_frame`
+    - `point_cloud_alias_topic: /realsense/depth/points2`
+    - `full_octomap_topic: /octomap_full`
+    - `binary_octomap_topic: /octomap_binary`
+    - `camera_pose_topic: /camera_pose`
+
+Expected runtime topics:
+
+```bash
+ros2 topic info /octomap_full
+ros2 topic echo /octomap_full --once
+ros2 topic info /octomap_binary
+ros2 topic hz /octomap_occupied_points
+ros2 topic hz /realsense/depth/points2
+ros2 topic echo /camera_pose --once
+```
+
+Important:
+
+- `/octomap_full` is now the authoritative map for information gain and NBV.
+- `/octomap_binary` remains available only for compatibility/debug use.
+- `/octomap_occupied_points` is still only an RViz visualization projection.
+- No Isaac physics, SLAM, Nav2 costmap, or TF behavior is changed by these
+  publishers.
+
+Verification:
+
+```bash
+python3 -m unittest isaac_sim.tests.test_wrist_octomap_contract -v
+
+python3 -m py_compile \
+  mobile_manipulator_navigation/launch/wrist_octomap.launch.py \
+  isaac_sim/tests/test_wrist_octomap_contract.py
+
+source /opt/ros/humble/setup.bash
+colcon build --packages-select mobile_manipulator_navigation \
+  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export ROS_LOG_DIR=/tmp/ros-log
+timeout 5 ros2 launch mobile_manipulator_navigation wrist_octomap.launch.py \
+  use_sim_time:=true
+```
+
+Bounded launch note:
+
+- The sandboxed launch started `point_cloud_xyz_node` and
+  `wrist_depth_octomap_node`.
+- The node logged:
+  - `publishing '/octomap_full'`
+- DDS socket creation is blocked inside the Codex sandbox, so live topic
+  discovery must be checked in the user's normal terminal.
+
+## 2026-07-03 FKIE NBV Prep: Passive Footprint Publisher
+
+Goal:
+
+- Add the fourth FKIE input topic without changing Isaac, SLAM, Nav2 costmap
+  behavior, or TF publication.
+
+FKIE-required topic:
+
+```text
+/${robot_ns}_mbf/global_costmap/footprint
+geometry_msgs/msg/PolygonStamped
+```
+
+Chosen topic:
+
+```text
+/mobile_manipulator_mbf/global_costmap/footprint
+```
+
+Changes:
+
+- Added `mobile_manipulator_navigation/src/nbv_footprint_publisher_node.cpp`.
+  - Node name: `nbv_footprint_publisher`
+  - Publishes only:
+    - `/mobile_manipulator_mbf/global_costmap/footprint`
+  - Reads TF:
+    - `map -> base_link`
+  - Transforms the existing Nav2 footprint from `base_link` into `map`.
+  - Does not subscribe to or publish:
+    - `/cmd_vel`
+    - `/scan`
+    - `/map`
+    - `/tf`
+    - any Nav2 costmap config topic.
+- Added `mobile_manipulator_navigation/config/nbv_footprint.yaml`.
+  - `map_frame: map`
+  - `base_frame: base_link`
+  - `footprint_topic: /mobile_manipulator_mbf/global_costmap/footprint`
+  - `footprint_xy: [-0.30, -0.25, -0.30, 0.25, 0.30, 0.25, 0.30, -0.25]`
+- Updated `mobile_manipulator_navigation/launch/wrist_octomap.launch.py`.
+  - Starts `nbv_footprint_publisher_node` alongside the OctoMap compatibility
+    topics.
+
+Runtime checks:
+
+```bash
+ros2 topic echo /mobile_manipulator_mbf/global_costmap/footprint --once
+ros2 topic hz /mobile_manipulator_mbf/global_costmap/footprint
+ros2 param get /nbv_footprint_publisher footprint_topic
+ros2 param get /nbv_footprint_publisher map_frame
+ros2 run tf2_ros tf2_echo map base_link
+```
+
+Expected:
+
+```text
+frame_id: map
+4 polygon points
+topic: /mobile_manipulator_mbf/global_costmap/footprint
+```
+
+Verification:
+
+```bash
+python3 -m unittest \
+  isaac_sim.tests.test_navigation_contract \
+  isaac_sim.tests.test_wrist_octomap_contract -v
+
+source /opt/ros/humble/setup.bash
+colcon build --packages-select mobile_manipulator_navigation \
+  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+export ROS_LOG_DIR=/tmp/ros-log
+timeout 5 ros2 launch mobile_manipulator_navigation wrist_octomap.launch.py \
+  use_sim_time:=true
+```
+
+Bounded launch note:
+
+- The sandboxed launch started:
+  - `point_cloud_xyz_node`
+  - `wrist_depth_octomap_node`
+  - `nbv_footprint_publisher_node`
+- The footprint node logged:
+  - `Publishing passive NBV footprint on '/mobile_manipulator_mbf/global_costmap/footprint' in frame 'map'`
+
+## 2026-07-03 MoveIt Voxel Collision Bridge
+
+Goal:
+
+- Make MoveIt arm planning avoid occupied voxels observed by the wrist depth
+  camera before merging the current branch.
+
+Design:
+
+- Keep `/octomap_full` as the authoritative probabilistic NBV map.
+- Use `/octomap_occupied_points` only as the occupied-voxel projection for
+  collision geometry.
+- Convert occupied voxel centers into MoveIt collision boxes in the planning
+  frame.
+- Crop to an editable arm workspace before publishing to avoid flooding MoveIt.
+
+New node:
+
+```text
+mobile_manipulator_moveit_bridge/octomap_voxel_planning_scene_bridge
+```
+
+Input:
+
+```text
+/octomap_occupied_points
+sensor_msgs/msg/PointCloud2
+```
+
+Outputs / service:
+
+```text
+/planning_scene
+moveit_msgs/msg/PlanningScene
+
+/apply_planning_scene
+moveit_msgs/srv/ApplyPlanningScene
+```
+
+Collision object:
+
+```text
+id: nbv_octomap_occupied_voxels
+frame_id: base_link
+primitive type: BOX
+operation: ADD
+```
+
+Editable parameters:
+
+File:
+
+```text
+mobile_manipulator_moveit_bridge/config/octomap_voxel_planning_scene.yaml
+```
+
+Parameters:
+
+```yaml
+occupied_cloud_topic: /octomap_occupied_points
+planning_scene_topic: /planning_scene
+apply_planning_scene_service: /apply_planning_scene
+planning_frame: base_link
+workspace_min_x: -0.5
+workspace_max_x: 1.2
+workspace_min_y: -0.8
+workspace_max_y: 0.8
+workspace_min_z: 0.0
+workspace_max_z: 1.8
+voxel_box_size: 0.05
+max_boxes: 2500
+publish_every_n_clouds: 3
+transform_timeout: 0.5
+```
+
+Launch integration:
+
+- `mobile_manipulator_moveit_config/launch/moveit_isaac.launch.py` now starts:
+  - `octomap_voxel_planning_scene_bridge`
+
+Runtime checks:
+
+```bash
+ros2 node list | grep octomap_voxel
+ros2 param get /octomap_voxel_planning_scene_bridge workspace_min_x
+ros2 param get /octomap_voxel_planning_scene_bridge workspace_max_x
+ros2 topic hz /octomap_occupied_points
+ros2 service list | grep apply_planning_scene
+ros2 topic echo /planning_scene --once
+```
+
+In MoveIt RViz:
+
+- Add or enable PlanningScene/Scene Robot displays if needed.
+- Move the wrist camera so `/octomap_occupied_points` contains obstacles inside
+  the configured workspace.
+- Plan an arm motion through those voxels; MoveIt should treat the published
+  boxes as collision geometry.
+
+Limitations:
+
+- This is a local collision projection for arm planning, not the full
+  probabilistic exploration map.
+- Too many boxes can slow planning; tune `max_boxes`, `publish_every_n_clouds`,
+  and workspace bounds if planning becomes slow.
+- Live collision avoidance must be checked in the user's normal ROS/Isaac
+  session because Codex sandbox DDS cannot perform full runtime topic/service
+  communication.
+
+Verification:
+
+```bash
+python3 -m unittest \
+  isaac_sim.tests.test_moveit_config_contract \
+  isaac_sim.tests.test_wrist_octomap_contract \
+  isaac_sim.tests.test_navigation_contract -v
+
+source /opt/ros/humble/setup.bash
+colcon build --packages-select \
+  mobile_manipulator_moveit_bridge \
+  mobile_manipulator_moveit_config \
+  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 pkg executables mobile_manipulator_moveit_bridge
+ros2 launch mobile_manipulator_moveit_config moveit_isaac.launch.py --show-args
+```

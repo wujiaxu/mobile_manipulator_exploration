@@ -8,12 +8,15 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(control_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(shape_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2_sensor_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 
 add_library(trajectory_sampler src/trajectory_sampler.cpp)
@@ -44,12 +47,29 @@ ament_target_dependencies(
   tf2_ros
 )
 
+add_executable(octomap_voxel_planning_scene_bridge src/octomap_voxel_planning_scene_bridge.cpp)
+ament_target_dependencies(
+  octomap_voxel_planning_scene_bridge
+  geometry_msgs
+  moveit_msgs
+  rclcpp
+  sensor_msgs
+  shape_msgs
+  tf2_ros
+  tf2_sensor_msgs
+)
+
 install(
   DIRECTORY include/
   DESTINATION include
 )
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(
-  TARGETS trajectory_sampler isaac_trajectory_bridge pose_goal_planner
+  TARGETS
+    trajectory_sampler
+    isaac_trajectory_bridge
+    pose_goal_planner
+    octomap_voxel_planning_scene_bridge
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}

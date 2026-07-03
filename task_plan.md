@@ -14,6 +14,9 @@ Add MoveIt 2 end-effector pose control for the unified mobile manipulator in Isa
 - [x] Add wrist depth image to `PointCloud2` conversion.
 - [x] Add a project-owned OctoMap node that integrates wrist depth clouds in `map`.
 - [x] Add RViz displays for wrist depth image, z-colored depth points, and z-colored occupied OctoMap voxels.
+- [x] Publish full probabilistic `/octomap_full`, `/camera_pose`, and `/realsense/depth/points2` compatibility outputs for the future FKIE NBV planner branch.
+- [x] Publish passive FKIE-style `/mobile_manipulator_mbf/global_costmap/footprint` in `map`.
+- [x] Add MoveIt PlanningScene collision boxes from cropped `/octomap_occupied_points` so arm planning can avoid observed occupied voxels.
 - [ ] Live-verify `/octomap_binary` while Isaac, SLAM Toolbox, and wrist depth topics are running.
 
 ## Phases

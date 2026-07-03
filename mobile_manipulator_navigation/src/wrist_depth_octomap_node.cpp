@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "octomap/OcTree.h"
 #include "octomap/Pointcloud.h"
@@ -22,10 +23,15 @@ public:
   WristDepthOctomapNode()
   : Node("wrist_depth_octomap"),
     map_frame_(declare_parameter<std::string>("map_frame", "map")),
+    camera_frame_(declare_parameter<std::string>("camera_frame", "wrist_camera_color_optical_frame")),
     cloud_topic_(declare_parameter<std::string>("cloud_topic", "/wrist_camera/depth/points")),
-    octomap_topic_(declare_parameter<std::string>("octomap_topic", "/octomap_binary")),
+    point_cloud_alias_topic_(
+      declare_parameter<std::string>("point_cloud_alias_topic", "/realsense/depth/points2")),
+    full_octomap_topic_(declare_parameter<std::string>("full_octomap_topic", "/octomap_full")),
+    binary_octomap_topic_(declare_parameter<std::string>("binary_octomap_topic", "/octomap_binary")),
     occupied_cloud_topic_(
       declare_parameter<std::string>("occupied_cloud_topic", "/octomap_occupied_points")),
+    camera_pose_topic_(declare_parameter<std::string>("camera_pose_topic", "/camera_pose")),
     resolution_(declare_parameter<double>("resolution", 0.05)),
     max_range_(declare_parameter<double>("max_range", 3.0)),
     min_z_(declare_parameter<double>("min_z", 0.05)),
@@ -46,10 +52,16 @@ public:
       throw std::runtime_error("publish_every_n_clouds must be >= 1");
     }
 
-    octomap_publisher_ = create_publisher<octomap_msgs::msg::Octomap>(
-      octomap_topic_, rclcpp::QoS(1).transient_local().reliable());
+    point_cloud_alias_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      point_cloud_alias_topic_, rclcpp::SensorDataQoS());
+    full_octomap_publisher_ = create_publisher<octomap_msgs::msg::Octomap>(
+      full_octomap_topic_, rclcpp::QoS(1).transient_local().reliable());
+    binary_octomap_publisher_ = create_publisher<octomap_msgs::msg::Octomap>(
+      binary_octomap_topic_, rclcpp::QoS(1).transient_local().reliable());
     occupied_cloud_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
       occupied_cloud_topic_, rclcpp::QoS(1).transient_local().reliable());
+    camera_pose_publisher_ = create_publisher<geometry_msgs::msg::PoseStamped>(
+      camera_pose_topic_, rclcpp::QoS(1).transient_local().reliable());
     cloud_subscription_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       cloud_topic_, rclcpp::SensorDataQoS(),
       std::bind(&WristDepthOctomapNode::cloud_callback, this, std::placeholders::_1));
@@ -57,7 +69,7 @@ public:
     RCLCPP_INFO(
       get_logger(),
       "Building wrist depth OctoMap in frame '%s' from '%s', publishing '%s'",
-      map_frame_.c_str(), cloud_topic_.c_str(), octomap_topic_.c_str());
+      map_frame_.c_str(), cloud_topic_.c_str(), full_octomap_topic_.c_str());
   }
 
 private:
@@ -67,6 +79,8 @@ private:
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Ignoring cloud with empty frame_id");
       return;
     }
+
+    point_cloud_alias_publisher_->publish(*message);
 
     geometry_msgs::msg::TransformStamped transform;
     try {
@@ -79,6 +93,7 @@ private:
         map_frame_.c_str(), ex.what());
       return;
     }
+    publish_camera_pose(message->header.stamp);
 
     sensor_msgs::msg::PointCloud2 map_cloud;
     tf2::doTransform(*message, map_cloud, transform);
@@ -111,21 +126,53 @@ private:
 
     ++clouds_integrated_;
     if (clouds_integrated_ % publish_every_n_clouds_ == 0) {
-      publish_octomap(message->header.stamp);
+      publish_octomaps(message->header.stamp);
       publish_occupied_cloud(message->header.stamp);
     }
   }
 
-  void publish_octomap(const rclcpp::Time & stamp)
+  void publish_camera_pose(const rclcpp::Time & stamp)
   {
-    octomap_msgs::msg::Octomap message;
-    message.header.frame_id = map_frame_;
-    message.header.stamp = stamp;
-    if (!octomap_msgs::binaryMapToMsg(*tree_, message)) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Failed to serialize OctoMap");
+    geometry_msgs::msg::TransformStamped camera_transform;
+    try {
+      camera_transform = tf_buffer_.lookupTransform(
+        map_frame_, camera_frame_, stamp, rclcpp::Duration::from_seconds(transform_timeout_));
+    } catch (const tf2::TransformException & ex) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000, "Waiting for camera pose transform to %s: %s",
+        map_frame_.c_str(), ex.what());
       return;
     }
-    octomap_publisher_->publish(message);
+
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = map_frame_;
+    pose.header.stamp = stamp;
+    pose.pose.position.x = camera_transform.transform.translation.x;
+    pose.pose.position.y = camera_transform.transform.translation.y;
+    pose.pose.position.z = camera_transform.transform.translation.z;
+    pose.pose.orientation = camera_transform.transform.rotation;
+    camera_pose_publisher_->publish(pose);
+  }
+
+  void publish_octomaps(const rclcpp::Time & stamp)
+  {
+    octomap_msgs::msg::Octomap full_message;
+    full_message.header.frame_id = map_frame_;
+    full_message.header.stamp = stamp;
+    if (!octomap_msgs::fullMapToMsg(*tree_, full_message)) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Failed to serialize full OctoMap");
+      return;
+    }
+    full_octomap_publisher_->publish(full_message);
+
+    octomap_msgs::msg::Octomap binary_message;
+    binary_message.header.frame_id = map_frame_;
+    binary_message.header.stamp = stamp;
+    if (!octomap_msgs::binaryMapToMsg(*tree_, binary_message)) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Failed to serialize binary OctoMap");
+      return;
+    }
+    binary_octomap_publisher_->publish(binary_message);
   }
 
   void publish_occupied_cloud(const rclcpp::Time & stamp)
@@ -164,9 +211,13 @@ private:
   }
 
   std::string map_frame_;
+  std::string camera_frame_;
   std::string cloud_topic_;
-  std::string octomap_topic_;
+  std::string point_cloud_alias_topic_;
+  std::string full_octomap_topic_;
+  std::string binary_octomap_topic_;
   std::string occupied_cloud_topic_;
+  std::string camera_pose_topic_;
   double resolution_;
   double max_range_;
   double min_z_;
@@ -178,8 +229,11 @@ private:
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;
-  rclcpp::Publisher<octomap_msgs::msg::Octomap>::SharedPtr octomap_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_alias_publisher_;
+  rclcpp::Publisher<octomap_msgs::msg::Octomap>::SharedPtr full_octomap_publisher_;
+  rclcpp::Publisher<octomap_msgs::msg::Octomap>::SharedPtr binary_octomap_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr occupied_cloud_publisher_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr camera_pose_publisher_;
 };
 }  // namespace mobile_manipulator_navigation
 

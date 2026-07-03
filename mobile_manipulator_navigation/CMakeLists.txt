@@ -23,9 +23,19 @@ ament_target_dependencies(
   tf2_sensor_msgs
 )
 
+add_executable(nbv_footprint_publisher_node src/nbv_footprint_publisher_node.cpp)
+ament_target_dependencies(
+  nbv_footprint_publisher_node
+  geometry_msgs
+  rclcpp
+  tf2_ros
+)
+
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 install(
-  TARGETS wrist_depth_octomap_node
+  TARGETS
+    wrist_depth_octomap_node
+    nbv_footprint_publisher_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 

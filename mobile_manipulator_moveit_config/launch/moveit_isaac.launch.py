@@ -5,13 +5,22 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 from moveit_configs_utils import MoveItConfigsBuilder
+from launch.substitutions import PathJoinSubstitution
 
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
     use_robot_state_publisher = LaunchConfiguration("use_robot_state_publisher")
+    voxel_bridge_params = PathJoinSubstitution(
+        [
+            FindPackageShare("mobile_manipulator_moveit_bridge"),
+            "config",
+            "octomap_voxel_planning_scene.yaml",
+        ]
+    )
 
     moveit_config = (
         MoveItConfigsBuilder(
@@ -84,6 +93,13 @@ def generate_launch_description():
                 executable="pose_goal_planner",
                 output="screen",
                 parameters=[moveit_config.to_dict(), sim_time_parameter],
+            ),
+            Node(
+                package="mobile_manipulator_moveit_bridge",
+                executable="octomap_voxel_planning_scene_bridge",
+                name="octomap_voxel_planning_scene_bridge",
+                output="screen",
+                parameters=[voxel_bridge_params, sim_time_parameter],
             ),
             Node(
                 package="rviz2",

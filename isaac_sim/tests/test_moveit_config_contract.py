@@ -11,6 +11,7 @@ WORKSPACE = Path(__file__).resolve().parents[2]
 CONFIG_PACKAGE = WORKSPACE / "mobile_manipulator_moveit_config"
 CONFIG_DIR = CONFIG_PACKAGE / "config"
 BRIDGE_PACKAGE = WORKSPACE / "mobile_manipulator_moveit_bridge"
+BRIDGE_CONFIG_DIR = BRIDGE_PACKAGE / "config"
 ARM_JOINTS = [f"joint{i}" for i in range(1, 8)]
 EXPECTED_LIMITS = {
     "joint1": (-6.283185307179586, 6.283185307179586, 3.14),
@@ -184,6 +185,67 @@ class MoveItBridgeContractTest(unittest.TestCase):
         cmake = (BRIDGE_PACKAGE / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("add_executable(pose_goal_planner", cmake)
 
+    def test_octomap_voxel_bridge_publishes_planning_scene_diff(self):
+        source_path = BRIDGE_PACKAGE / "src/octomap_voxel_planning_scene_bridge.cpp"
+        self.assertTrue(source_path.is_file(), source_path)
+        source = source_path.read_text(encoding="utf-8")
+        for literal in (
+            "octomap_voxel_planning_scene_bridge",
+            "sensor_msgs/msg/point_cloud2.hpp",
+            "moveit_msgs/msg/planning_scene.hpp",
+            "moveit_msgs/srv/apply_planning_scene.hpp",
+            "shape_msgs/msg/solid_primitive.hpp",
+            "/octomap_occupied_points",
+            "/planning_scene",
+            "/apply_planning_scene",
+            "planning_frame_",
+            "source_frame",
+            "apply_planning_scene_service_",
+            "workspace_min_x",
+            "workspace_max_x",
+            "workspace_min_y",
+            "workspace_max_y",
+            "workspace_min_z",
+            "workspace_max_z",
+            "voxel_box_size",
+            "max_boxes",
+            "nbv_octomap_occupied_voxels",
+            "CollisionObject::ADD",
+            "scene.is_diff = true",
+        ):
+            self.assertIn(literal, source)
+
+        config_path = BRIDGE_CONFIG_DIR / "octomap_voxel_planning_scene.yaml"
+        self.assertTrue(config_path.is_file(), config_path)
+        params = yaml.safe_load(config_path.read_text(encoding="utf-8"))[
+            "octomap_voxel_planning_scene_bridge"
+        ]["ros__parameters"]
+        self.assertEqual(params["occupied_cloud_topic"], "/octomap_occupied_points")
+        self.assertEqual(params["planning_scene_topic"], "/planning_scene")
+        self.assertEqual(params["apply_planning_scene_service"], "/apply_planning_scene")
+        self.assertEqual(params["planning_frame"], "base_link")
+        self.assertEqual(params["workspace_min_x"], -0.5)
+        self.assertEqual(params["workspace_max_x"], 1.2)
+        self.assertEqual(params["workspace_min_y"], -0.8)
+        self.assertEqual(params["workspace_max_y"], 0.8)
+        self.assertEqual(params["workspace_min_z"], 0.0)
+        self.assertEqual(params["workspace_max_z"], 1.8)
+        self.assertEqual(params["voxel_box_size"], 0.05)
+        self.assertGreater(params["max_boxes"], 0)
+
+        package = ET.parse(BRIDGE_PACKAGE / "package.xml").getroot()
+        dependencies = {
+            element.text
+            for element in package
+            if element.tag in {"depend", "exec_depend"}
+        }
+        expected = {"moveit_msgs", "shape_msgs"}
+        self.assertTrue(expected.issubset(dependencies), expected - dependencies)
+
+        cmake = (BRIDGE_PACKAGE / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("add_executable(octomap_voxel_planning_scene_bridge", cmake)
+        self.assertIn("install(DIRECTORY config", cmake)
+
 
 class MoveItLaunchContractTest(unittest.TestCase):
     def test_integrated_launch_contains_required_nodes_and_arguments(self):
@@ -197,6 +259,8 @@ class MoveItLaunchContractTest(unittest.TestCase):
             "move_group",
             "isaac_trajectory_bridge",
             "pose_goal_planner",
+            "octomap_voxel_planning_scene_bridge",
+            "octomap_voxel_planning_scene.yaml",
             "rviz2",
         ):
             self.assertIn(literal, source)

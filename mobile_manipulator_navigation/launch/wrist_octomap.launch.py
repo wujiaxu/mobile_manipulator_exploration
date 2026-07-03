@@ -10,6 +10,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     nav_share = FindPackageShare("mobile_manipulator_navigation")
     octomap_params = PathJoinSubstitution([nav_share, "config", "wrist_octomap.yaml"])
+    footprint_params = PathJoinSubstitution([nav_share, "config", "nbv_footprint.yaml"])
 
     return LaunchDescription(
         [
@@ -32,6 +33,13 @@ def generate_launch_description():
                 name="wrist_depth_octomap",
                 output="screen",
                 parameters=[octomap_params, {"use_sim_time": use_sim_time}],
+            ),
+            Node(
+                package="mobile_manipulator_navigation",
+                executable="nbv_footprint_publisher_node",
+                name="nbv_footprint_publisher",
+                output="screen",
+                parameters=[footprint_params, {"use_sim_time": use_sim_time}],
             ),
         ]
     )

@@ -1,0 +1,17 @@
+octomap_voxel_planning_scene_bridge:
+  ros__parameters:
+    use_sim_time: true
+    occupied_cloud_topic: /octomap_occupied_points
+    planning_scene_topic: /planning_scene
+    apply_planning_scene_service: /apply_planning_scene
+    planning_frame: base_link
+    workspace_min_x: -0.5
+    workspace_max_x: 1.2
+    workspace_min_y: -0.8
+    workspace_max_y: 0.8
+    workspace_min_z: 0.0
+    workspace_max_z: 1.8
+    voxel_box_size: 0.05
+    max_boxes: 2500
+    publish_every_n_clouds: 3
+    transform_timeout: 0.5

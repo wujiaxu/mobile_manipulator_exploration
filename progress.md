@@ -134,3 +134,7 @@
 - Updated the baked Isaac wrist camera to `848x480` with USD intrinsics derived from `fx=429`, `fy=427`, `cx=425`, `cy=240`; regenerated both robot USD assets and verified the Isaac import contract.
 - Added RViz visualization for the wrist depth image, z-colored wrist depth point cloud, and a z-colored occupied-voxel cloud derived from the map-frame OctoMap.
 - Added `/octomap_occupied_points` because this host has `octomap_msgs` but not `octomap_rviz_plugins`; RViz can show the occupied voxels with the default `PointCloud2` display while `/octomap_binary` remains available for algorithms.
+- Changed the wrist OctoMap pipeline to publish the probabilistic full map on `/octomap_full` for NBV information-gain work, while keeping `/octomap_binary` and `/octomap_occupied_points` for compatibility and RViz.
+- Added FKIE-prep outputs from the same node: `/camera_pose` as `geometry_msgs/msg/PoseStamped` in `map`, and `/realsense/depth/points2` as a compatibility alias for the wrist depth cloud.
+- Added a passive FKIE-style footprint publisher on `/mobile_manipulator_mbf/global_costmap/footprint`, transforming the existing Nav2 base footprint from `base_link` into `map` without modifying Isaac, SLAM, Nav2 costmap params, or TF.
+- Added a MoveIt PlanningScene bridge that converts `/octomap_occupied_points` into cropped voxel collision boxes in `base_link`, publishes `/planning_scene` diffs, and calls `/apply_planning_scene` when MoveIt is available.

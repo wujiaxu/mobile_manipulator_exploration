@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 
+#include "geometry_msgs/msg/point_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "octomap/OcTree.h"
@@ -11,6 +12,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
@@ -36,6 +38,14 @@ public:
     max_range_(declare_parameter<double>("max_range", 3.0)),
     min_z_(declare_parameter<double>("min_z", 0.05)),
     max_z_(declare_parameter<double>("max_z", 2.5)),
+    self_filter_enabled_(declare_parameter<bool>("self_filter_enabled", true)),
+    self_filter_frame_(declare_parameter<std::string>("self_filter_frame", "base_link")),
+    self_filter_min_x_(declare_parameter<double>("self_filter_min_x", -0.45)),
+    self_filter_max_x_(declare_parameter<double>("self_filter_max_x", 0.45)),
+    self_filter_min_y_(declare_parameter<double>("self_filter_min_y", -0.35)),
+    self_filter_max_y_(declare_parameter<double>("self_filter_max_y", 0.35)),
+    self_filter_min_z_(declare_parameter<double>("self_filter_min_z", -0.10)),
+    self_filter_max_z_(declare_parameter<double>("self_filter_max_z", 1.60)),
     transform_timeout_(declare_parameter<double>("transform_timeout", 0.5)),
     publish_every_n_clouds_(declare_parameter<int>("publish_every_n_clouds", 1)),
     tree_(std::make_unique<octomap::OcTree>(resolution_)),
@@ -50,6 +60,12 @@ public:
     }
     if (publish_every_n_clouds_ < 1) {
       throw std::runtime_error("publish_every_n_clouds must be >= 1");
+    }
+    if (self_filter_min_x_ >= self_filter_max_x_ ||
+      self_filter_min_y_ >= self_filter_max_y_ ||
+      self_filter_min_z_ >= self_filter_max_z_)
+    {
+      throw std::runtime_error("self filter min bounds must be smaller than max bounds");
     }
 
     point_cloud_alias_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -98,7 +114,23 @@ private:
     sensor_msgs::msg::PointCloud2 map_cloud;
     tf2::doTransform(*message, map_cloud, transform);
 
+    geometry_msgs::msg::TransformStamped self_filter_transform;
+    bool have_self_filter_transform = false;
+    if (self_filter_enabled_) {
+      try {
+        self_filter_transform = tf_buffer_.lookupTransform(
+          self_filter_frame_, map_frame_, message->header.stamp,
+          rclcpp::Duration::from_seconds(transform_timeout_));
+        have_self_filter_transform = true;
+      } catch (const tf2::TransformException & ex) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000, "Waiting for self filter transform %s <- %s: %s",
+          self_filter_frame_.c_str(), map_frame_.c_str(), ex.what());
+      }
+    }
+
     octomap::Pointcloud octomap_cloud;
+    int self_filtered_points = 0;
     sensor_msgs::PointCloud2ConstIterator<float> iter_x(map_cloud, "x");
     sensor_msgs::PointCloud2ConstIterator<float> iter_y(map_cloud, "y");
     sensor_msgs::PointCloud2ConstIterator<float> iter_z(map_cloud, "z");
@@ -110,6 +142,10 @@ private:
         continue;
       }
       if (z < min_z_ || z > max_z_) {
+        continue;
+      }
+      if (have_self_filter_transform && inside_self_filter_box(x, y, z, self_filter_transform)) {
+        ++self_filtered_points;
         continue;
       }
       octomap_cloud.push_back(x, y, z);
@@ -126,9 +162,31 @@ private:
 
     ++clouds_integrated_;
     if (clouds_integrated_ % publish_every_n_clouds_ == 0) {
+      RCLCPP_DEBUG(
+        get_logger(), "Integrated wrist cloud with %zu points after self-filtering %d points",
+        octomap_cloud.size(), self_filtered_points);
       publish_octomaps(message->header.stamp);
       publish_occupied_cloud(message->header.stamp);
     }
+  }
+
+  bool inside_self_filter_box(
+    const float map_x,
+    const float map_y,
+    const float map_z,
+    const geometry_msgs::msg::TransformStamped & self_filter_transform) const
+  {
+    geometry_msgs::msg::PointStamped map_point;
+    map_point.header.frame_id = map_frame_;
+    map_point.point.x = map_x;
+    map_point.point.y = map_y;
+    map_point.point.z = map_z;
+
+    geometry_msgs::msg::PointStamped self_point;
+    tf2::doTransform(map_point, self_point, self_filter_transform);
+    return self_point.point.x >= self_filter_min_x_ && self_point.point.x <= self_filter_max_x_ &&
+           self_point.point.y >= self_filter_min_y_ && self_point.point.y <= self_filter_max_y_ &&
+           self_point.point.z >= self_filter_min_z_ && self_point.point.z <= self_filter_max_z_;
   }
 
   void publish_camera_pose(const rclcpp::Time & stamp)
@@ -222,6 +280,14 @@ private:
   double max_range_;
   double min_z_;
   double max_z_;
+  bool self_filter_enabled_;
+  std::string self_filter_frame_;
+  double self_filter_min_x_;
+  double self_filter_max_x_;
+  double self_filter_min_y_;
+  double self_filter_max_y_;
+  double self_filter_min_z_;
+  double self_filter_max_z_;
   double transform_timeout_;
   int publish_every_n_clouds_;
   int clouds_integrated_ = 0;

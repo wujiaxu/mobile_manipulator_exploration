@@ -1,0 +1,3 @@
+std_msgs/Header header
+float32 grid_size
+mobile_manipulator_fkie_msgs/MeasurementEstimationValue[] values

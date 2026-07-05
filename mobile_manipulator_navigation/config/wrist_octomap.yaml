@@ -13,5 +13,13 @@ wrist_depth_octomap:
     max_range: 3.0
     min_z: 0.05
     max_z: 2.5
+    self_filter_enabled: true
+    self_filter_frame: base_link
+    self_filter_min_x: -0.45
+    self_filter_max_x: 0.45
+    self_filter_min_y: -0.35
+    self_filter_max_y: 0.35
+    self_filter_min_z: -0.10
+    self_filter_max_z: 1.60
     transform_timeout: 0.5
     publish_every_n_clouds: 1

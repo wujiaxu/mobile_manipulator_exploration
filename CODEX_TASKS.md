@@ -2158,3 +2158,142 @@ source install/setup.bash
 ros2 pkg executables mobile_manipulator_moveit_bridge
 ros2 launch mobile_manipulator_moveit_config moveit_isaac.launch.py --show-args
 ```
+
+## 2026-07-03 FKIE NBV Reproduction: ROS 2 Interface Scaffold
+
+Goal:
+
+- Start reproducing `fkie/fkie-nbv-planner` on the current Isaac Sim mobile
+  manipulator stack.
+- Keep Isaac/Nav2/MoveIt as the execution stack.
+- Prefer a ROS 2 native port before attempting a ROS 1 Docker bridge.
+
+Added:
+
+```text
+docs/references/fkie_nbv_repo_interface.md
+docs/references/fkie_reproduction_runtime.md
+docs/superpowers/plans/2026-07-03-fkie-nbv-reproduction.md
+mobile_manipulator_fkie_msgs/
+mobile_manipulator_fkie_nbv/
+scripts/check_fkie_inputs.sh
+```
+
+Local ignored references:
+
+```text
+third_party/fkie-nbv-planner
+third_party/fkie_environmental_measurements
+```
+
+New ROS 2 interfaces:
+
+```text
+mobile_manipulator_fkie_msgs/msg/BoundaryPolygon
+mobile_manipulator_fkie_msgs/msg/MeasurementEstimation
+mobile_manipulator_fkie_msgs/msg/MeasurementEstimationValue
+mobile_manipulator_fkie_msgs/action/NbvPlanner
+```
+
+New skeleton planner:
+
+```text
+mobile_manipulator_fkie_nbv/fkie_nbv_planner_node
+```
+
+Runtime action name:
+
+```text
+nbv_rrt
+```
+
+Inputs currently wired:
+
+```text
+/camera_pose
+/octomap_full
+/mobile_manipulator_mbf/global_costmap/footprint
+```
+
+Current planner behavior:
+
+- `mobile_manipulator_fkie_nbv` validates the FKIE-style inputs, converts
+  `/octomap_full` into an `octomap::OcTree`, samples deterministic camera-pose
+  candidates inside the request boundary, and scores them by unknown/free-space
+  ray gain.
+- This ports the first FKIE information-gain kernel, but not yet the complete
+  upstream RRT tree expansion, cached frontier management, path optimizer, or
+  marker visualization.
+
+Build command, avoiding Conda Python leakage into ROSIDL:
+
+```bash
+env -u CONDA_PREFIX -u CONDA_DEFAULT_ENV -u CONDA_EXE \
+  -u CONDA_PYTHON_EXE -u CONDA_PROMPT_MODIFIER -u CONDA_SHLVL \
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  bash -lc 'source /opt/ros/humble/setup.bash; colcon build --packages-select mobile_manipulator_fkie_msgs mobile_manipulator_fkie_nbv --cmake-clean-cache --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3 -DPYTHON_EXECUTABLE=/usr/bin/python3 -DPYTHON_INCLUDE_DIR=/usr/include/python3.10 -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so'
+```
+
+Next commands:
+
+```bash
+python3 -m unittest isaac_sim.tests.test_fkie_reproduction_contract -v
+
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch mobile_manipulator_fkie_nbv fkie_nbv_planner.launch.py use_sim_time:=true
+```
+
+Live input check after Isaac, mapping, wrist OctoMap, and MoveIt are running:
+
+```bash
+./scripts/check_fkie_inputs.sh
+```
+
+Send one fixed-boundary NBV request after `mobile_manipulator_fkie_nbv` is
+running:
+
+```bash
+./scripts/send_fkie_nbv_goal.sh
+```
+
+The script wraps the C++ action client:
+
+```bash
+ros2 run mobile_manipulator_fkie_nbv send_fkie_nbv_goal_client
+```
+
+Boundary transport note:
+
+- The ROS 2 action now uses flat boundary fields:
+  - `boundary_x`
+  - `boundary_y`
+  - `boundary_min_z`
+  - `boundary_max_z`
+- This intentionally diverges from the original FKIE nested
+  `BoundaryPolygon -> PolygonStamped -> Polygon -> Point32[]` goal shape,
+  because the nested polygon arrived as an empty point array through the ROS 2
+  action transport on this host.
+
+For a larger controlled-rooms boundary:
+
+```bash
+FKIE_BOUNDARY_MIN_X=-6.0 FKIE_BOUNDARY_MAX_X=6.0 \
+FKIE_BOUNDARY_MIN_Y=-6.0 FKIE_BOUNDARY_MAX_Y=6.0 \
+./scripts/send_fkie_nbv_goal.sh
+```
+
+Direct parameter form:
+
+```bash
+ros2 run mobile_manipulator_fkie_nbv send_fkie_nbv_goal_client --ros-args \
+  -p min_x:=-6.0 -p max_x:=6.0 \
+  -p min_y:=-6.0 -p max_y:=6.0 \
+  -p min_z:=0.4 -p max_z:=1.4
+```
+
+Next implementation step:
+
+- Validate the returned NBV camera pose in the live Isaac session.
+- Add an execution adapter that sends arm-reachable NBV poses to MoveIt first.
+- Add Nav2 base movement only after the arm-only NBV loop is stable.

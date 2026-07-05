@@ -38,6 +38,9 @@ frames_*.pdf
 .agents/
 .codex/
 
+# Local third-party source checkouts used for inspection/porting
+third_party/
+
 # Generated Isaac import intermediates
 build/isaac_import/
 

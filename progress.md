@@ -138,3 +138,178 @@
 - Added FKIE-prep outputs from the same node: `/camera_pose` as `geometry_msgs/msg/PoseStamped` in `map`, and `/realsense/depth/points2` as a compatibility alias for the wrist depth cloud.
 - Added a passive FKIE-style footprint publisher on `/mobile_manipulator_mbf/global_costmap/footprint`, transforming the existing Nav2 base footprint from `base_link` into `map` without modifying Isaac, SLAM, Nav2 costmap params, or TF.
 - Added a MoveIt PlanningScene bridge that converts `/octomap_occupied_points` into cropped voxel collision boxes in `base_link`, publishes `/planning_scene` diffs, and calls `/apply_planning_scene` when MoveIt is available.
+
+## 2026-07-03
+
+- Started `feature/fkie-nbv-reproduction` for reproducing FKIE NBV behavior on the Isaac Sim baseline.
+- Cloned local FKIE source snapshots under ignored `third_party/` and recorded the upstream interface contract in `docs/references/fkie_nbv_repo_interface.md`.
+- Chose the ROS 2 native port path first; Docker/ROS 1 bridging is kept as a fallback if the planner algorithm port proves larger than expected.
+- Added `mobile_manipulator_fkie_msgs` with ROS 2 versions of FKIE-style `BoundaryPolygon`, `MeasurementEstimation`, `MeasurementEstimationValue`, and `NbvPlanner` action interfaces.
+- Added `mobile_manipulator_fkie_nbv`, a ROS 2 action server for `nbv_rrt` that subscribes to `/camera_pose`, `/octomap_full`, and `/mobile_manipulator_mbf/global_costmap/footprint`.
+- Replaced the initial centroid placeholder with a deterministic OctoMap-backed candidate scorer that samples poses inside the requested boundary and scores unknown/free-space ray gain.
+- Added `scripts/check_fkie_inputs.sh` and `docs/references/fkie_reproduction_runtime.md` to verify the live Isaac/ROS inputs before testing the planner.
+- Added `mobile_manipulator_fkie_nbv/send_fkie_nbv_goal_client`, a C++ action client that sends one fixed-boundary NBV request to `/nbv_rrt`; `scripts/send_fkie_nbv_goal.sh` now wraps this C++ client.
+- Simplified the ROS 2 `NbvPlanner` action goal boundary from nested `BoundaryPolygon` to flat `boundary_x`/`boundary_y` arrays plus z limits after the nested polygon repeatedly arrived empty through the action transport.
+- Verified contract tests, interface generation, package build, package executable visibility, launch argument loading, and bounded node startup.
+
+## 2026-07-04
+
+- Confirmed the FKIE NBV action server can receive a flat-boundary goal and produce a non-empty OctoMap gain-scored candidate.
+- Added the first NBV-to-arm adapter path: request `/nbv_rrt`, convert returned wrist camera pose into a `link_eef` target through TF, and publish the target on `/arm_target_pose`.
+- User live test showed the adapter reaches MoveIt, but the generated target is not currently plan-valid: OMPL reports `Unable to sample any valid states for goal tree`.
+- Root-cause assessment: the next blocker is target reachability/IK/collision validity at the adapter-to-MoveIt boundary, not ROS 2 action transport.
+- Wrote the next implementation plan in `docs/superpowers/plans/2026-07-04-fkie-nbv-arm-execution.md`: add guarded arm target publishing with current-pose diagnostics, small-step limiting, current-orientation preservation, and base-frame workspace checks.
+- Updated the plan to match the FKIE paper behavior: if the desired EEF target is not reachable by the manipulator, project the EEF target pose onto the ground plane and send it as a Nav2 `NavigateToPose` goal for the mobile base.
+- Corrected the FKIE fallback plan: the paper projects the farthest node on the RRT branch toward the unreachable EEF target, not the unreachable final target itself. The current ROS 2 port does not yet retain an RRT branch, so the plan now adds an ordered branch result first, with straight-line interpolation as a temporary contract until real RRT parent-chain extraction is implemented.
+- Re-scoped the FKIE work after user correction: do not implement temporary branch interpolation or extra workaround behavior. The next milestone is a ROS 2 refactor/port of the original ROS 1 RRT algorithm.
+- Inspected the original FKIE code paths: `executePlan`, `RRTNode`, `expandRRT`, `gainCubature`, `extractNBVPoses`, cached frontiers, and fallback result semantics.
+- Saved the grounded summary in `docs/references/fkie_original_algorithm_summary.md`.
+- Added the implementation plan `docs/superpowers/plans/2026-07-04-fkie-rrt-ros2-port.md`, focused on porting RRT nodes, KD-tree expansion, gain/yaw computation, cached frontiers, branch extraction, and original `goals`/`request_base_pose` semantics.
+- Completed the first ROS 2 RRT-port boundary:
+  - Added contract tests requiring FKIE RRT data-model files, original algorithm function boundaries, and original parameter names.
+  - Added `nbv_parameters.hpp`, `nbv_utils.hpp`, `rrt_node.hpp`, `tree_nanoflann_adapter.hpp`, and `rrt_node.cpp`.
+  - Replaced the simplified planner source with a ROS 2 planner shell that owns original-style state: cached nodes, best node/frontier, best branch, tree adapter, RRT function boundaries, FKIE parameters, flat-boundary conversion, and original result semantics.
+  - Updated `fkie_nbv_planner.yaml` with FKIE-style parameters from the original freespace-fast configuration.
+  - Updated CMake to compile `rrt_node.cpp`, include package headers/Eigen/OctoMap, and link `tf2`.
+- Verification passed: `python3 -m unittest isaac_sim.tests.test_fkie_reproduction_contract -v`, shell syntax checks for FKIE scripts, and `colcon build --packages-select mobile_manipulator_fkie_nbv`. The build emits only an upstream OctoMap deprecated `std::iterator` warning.
+- The actual RRT expansion internals are not ported yet. The next implementation starts at `expand_rrt`, nearest-neighbor search with the real KD-tree, sample acceptance, collision checks, and accepted-node insertion.
+- Ported the first real RRT expansion mechanics:
+  - Added a nanoflann wrapper header and switched the planner to `KDTreeSingleIndexDynamicAdaptor`.
+  - `reset_tree()` now rebuilds the KD-tree and `add_tree_node()` updates the dynamic index.
+  - `find_closest_neighbor()` and `is_sample_close_to_rrt_node()` now use nanoflann KNN search.
+  - `expand_rrt()` now samples with FKIE-style random sampling, extends by `rrt_step_size`, applies known/unknown occupancy policy, cylinder collision, boundary, footprint, and sample-distance rejection.
+  - Accepted nodes now get gain/yaw hooks, parent/child links, score computation, best-node update, KD-tree insertion, and cached-node insertion.
+- Verification passed again: 16 FKIE contract tests, FKIE shell syntax checks, and `colcon build --packages-select mobile_manipulator_fkie_nbv`. The only build stderr remains the upstream OctoMap deprecated `std::iterator` warning.
+- Remaining algorithm gap: `gain_cubature()` is still a placeholder returning zero, so the next step is Task 6: free-space cubature gain, measurement grid, visited-cell penalty, yaw computation, and frontier cache behavior.
+- Completed Task 6 of the FKIE RRT ROS 2 port:
+  - Added `nbv_grid.hpp` with sparse measurement and visited-grid support.
+  - Ported free-space cubature gain with spherical ray sampling, camera FOV yaw scoring, boundary/self-footprint rejection, occupied-voxel ray stopping, and unknown-volume gain accumulation.
+  - Updated node gain scoring to combine free-space gain, measurement estimation values, and visited-cell penalty.
+  - Added yaw selection from free-space cubature and measurement-gradient neighbors.
+  - Added cached-node gain refresh, low-gain trimming, frontier extraction, and `find_high_utility_frontier`.
+- Verification passed: focused Task 6 contract, full 17-test FKIE contract suite, FKIE shell syntax checks, and clean compile of `mobile_manipulator_fkie_msgs` plus `mobile_manipulator_fkie_nbv`. The only build stderr remains the upstream OctoMap deprecated `std::iterator` warning.
+- Next step: Task 7, verify/finish original branch extraction and action-result semantics before wiring the execution adapter to dispatch arm goals or Nav2 base fallback.
+- Completed Task 7 of the FKIE RRT ROS 2 port:
+  - Added a contract for original branch/result semantics.
+  - Confirmed branch extraction follows parent pointers from `best_node_` back toward the root and reverses the branch order.
+  - Updated `extract_nbv_poses()` to filter by `min_gain_`, keep branch poses within `arm_goal_range`, and transform output poses into `robot_sampling_frame` through `tf2_ros`.
+  - Preserved the original result cases: non-empty branch returns arm `goals`, empty branch/frontiers marks `complete_exploration`, and frontier fallback sets `request_base_pose=true` with `goal_pose_3d`.
+  - Removed the remaining "RRT shell" wording from planner logs.
+- Verification passed: focused Task 7 contract, full 18-test FKIE contract suite, FKIE shell syntax checks, and clean compile of `mobile_manipulator_fkie_msgs` plus `mobile_manipulator_fkie_nbv`. The only build stderr remains the upstream OctoMap deprecated `std::iterator` warning.
+- Next step: Task 8, wire the thin execution adapter so arm branch goals go to the existing MoveIt pose path and base fallback goals go to Nav2.
+- Completed Task 8 of the FKIE RRT ROS 2 port:
+  - Added a contract for execution adapter dispatch behavior.
+  - Updated `nbv_arm_target_adapter` so non-empty `result.goals` are converted from wrist-camera target poses to `link_eef` poses and published sequentially on the existing `/arm_target_pose` path.
+  - Added Nav2 `NavigateToPose` fallback support when `result.request_base_pose=true`.
+  - The fallback projects `goal_pose_3d` to the floor by setting `z=0.0` and preserves yaw while removing roll/pitch.
+  - Exposed adapter parameters in `scripts/execute_fkie_nbv_arm_target.sh`: `FKIE_NAV2_ACTION_NAME`, `FKIE_WAIT_TIMEOUT_S`, and `FKIE_ARM_GOAL_PUBLISH_DELAY_S`.
+  - Added the `nav2_msgs` dependency only to the adapter target after the first build caught the missing include path.
+- Verification passed: focused Task 8 contract, full 19-test FKIE contract suite, FKIE shell syntax checks, and clean compile of `mobile_manipulator_fkie_msgs` plus `mobile_manipulator_fkie_nbv`.
+- Next step: Task 9 live runtime verification with Isaac, mapping, wrist OctoMap, FKIE planner, and the adapter.
+- Added `mobile_manipulator_fkie_nbv/README.md` with end-to-end usage instructions for building the FKIE packages, starting the Isaac controlled-rooms stack with mapping/Nav2/MoveIt/wrist OctoMap, launching the FKIE planner, checking required topics/services, sending a non-executing NBV goal, and running the execution adapter for arm or Nav2 fallback motion.
+- Fixed the first live FKIE runtime issue where a valid goal returned `complete_exploration=true` with zero goals. Root cause: result logic checked `current_frontiers` before the new RRT expansion, so the first request with an empty cache could be marked complete when branch extraction returned no reachable arm goal. The planner now recomputes frontiers after RRT expansion and selects base fallback before declaring completion. Added a regression contract and expanded planner result logging with branch, pre-frontier, post-frontier, and cache counts.
+- Added deeper FKIE RRT live diagnostics after the same no-target result repeated: root initialization now logs camera pose, boundary size, and arm-height limits when rejected; RRT expansion logs accepted-node count plus rejection counts for invalid samples, occupied voxels, unknown voxels, collision, boundary, footprint, and near-duplicate filtering. Static contracts and FKIE package build pass.
+- Live diagnostics showed `accepted=0` and `rejected_unknown=29841`, proving the RRT was blocked by known-space-only sampling against the wrist OctoMap. Changed the Isaac FKIE config to `sample_in_unknown: true` so RRT can grow through unknown space while collision checks still reject occupied voxels. Added contract coverage and rebuilt the FKIE packages so the installed config is updated.
+- Tuned Nav2 for closer pipe navigation after FKIE started producing arm goals but path planning appeared constrained by inflated costmaps. Reduced local and global costmap inflation radius from `0.38 m` to `0.20 m` and increased cost scaling from `4.0` to `8.0` while keeping the true robot footprint unchanged. Added navigation contract coverage and rebuilt `mobile_manipulator_navigation`.
+- Added wrist OctoMap self-filtering to prevent robot body depth returns from being inserted into `/octomap_full`. The filter removes points inside a configurable `base_link` bounding box before OctoMap insertion; defaults are enabled in `wrist_octomap.yaml`.
+- Added FKIE RRT visualization on `/fkie_nbv/rrt_markers` as a `visualization_msgs/MarkerArray`, including sampled RRT nodes, tree edges, best branch, and frontier points. Added the display to `navigation.rviz` as "FKIE RRT Tree".
+- Increased the FKIE execution adapter default arm-goal publish delay from `0.5 s` to `8.0 s` so consecutive arm targets are less likely to be rejected by the MoveIt pose planner while it is busy executing the previous target.
+- Made FKIE startup exploration robust without a prebuilt OctoMap: if `/octomap_full` has not arrived, the planner now creates an empty unknown-space OcTree at `empty_octomap_resolution: 0.05` and runs RRT instead of aborting with "octomap is missing".
+- Changed the initial observation arm pose to improve first wrist-camera visibility: `joint1=+pi/2`, `joint6=-pi/2`, `joint7=+pi/2`, all other xArm joints at zero. This is applied both to MoveIt `initial_positions.yaml` and to Isaac articulation DOF positions/targets in the standalone and factory runners.
+- Corrected FKIE branch execution semantics after live testing and user review:
+  - `extract_nbv_poses()` now returns all selected branch poses above `min_gain_` in the planner/world frame instead of filtering out poses beyond `arm_goal_range`.
+  - `nbv_arm_target_adapter` now walks the selected branch in order. For each branch pose it checks reachability in `base_link`; reachable poses are published as wrist-camera-to-`link_eef` arm targets, while unreachable poses first trigger a Nav2 `NavigateToPose` goal to the nearest previous branch node before publishing the arm target.
+  - Exposed adapter tuning in `scripts/execute_fkie_nbv_arm_target.sh`: `FKIE_ROBOT_FRAME`, `FKIE_ARM_GOAL_RANGE`, and `FKIE_BASE_GOAL_RESULT_TIMEOUT_S`.
+- Verification passed: focused branch/adapter contract tests, full `python3 -m unittest isaac_sim.tests.test_fkie_reproduction_contract -v`, FKIE shell syntax checks, Python compile checks, and `colcon build --packages-select mobile_manipulator_fkie_msgs mobile_manipulator_fkie_nbv mobile_manipulator_moveit_config`. Build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Adjusted FKIE live execution after observing that arm branch candidates stayed near the initial arm pose and the adapter overused Nav2:
+  - Root cause: RRT is correctly rooted at the current wrist camera pose, but `nbv_arm_target_adapter` used a conservative 3D distance gate (`arm_goal_range=1.3`) before publishing arm targets, so many local branch poses were treated as base-reposition goals and MoveIt never got to attempt the exact arm pose.
+  - Changed adapter default `arm_goal_range` to `3.0` and script default `FKIE_ARM_GOAL_RANGE:-3.0`, making MoveIt the practical reachability/collision gate for branch poses.
+  - Loosened Nav2 goal tolerance from `0.18 m/rad` to `0.30 m/rad` for staging goals near clutter, while leaving robot footprint and obstacle inflation unchanged.
+  - Verification passed: full FKIE contract tests, full navigation contract tests, shell syntax check, and `colcon build --packages-select mobile_manipulator_fkie_msgs mobile_manipulator_fkie_nbv mobile_manipulator_navigation`.
+- Fixed the real cause of FKIE candidates clustering near the initial wrist pose:
+  - `generate_random_sample()` incorrectly computed spherical sample radius as `cbrt(uniform(0, radius))`, so `rrt_sampling_radius=30` produced samples only up to about `3.1 m` from the current camera pose.
+  - Corrected sampling to `radius * cbrt(uniform(0, 1))`, restoring the configured RRT sampling radius.
+  - Reverted the temporary adapter `arm_goal_range` default from `3.0` back to `1.3`, because `3 m` exceeds the arm workspace and was masking the planner-side sampling bug.
+  - Verification passed: full FKIE contract tests, script syntax check, and `colcon build --packages-select mobile_manipulator_fkie_msgs mobile_manipulator_fkie_nbv`. Build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Fixed FKIE branch execution TF extrapolation observed in live logs:
+  - Root cause: planner branch goals reused the stale `/camera_pose` message stamp, and the adapter preserved that stale stamp when publishing `/arm_target_pose`; MoveIt then tried to transform `map -> base_link` at an old sim time outside the TF buffer.
+  - Planner branch goals now use `now()` when converted to `PoseStamped`.
+  - Adapter normalizes branch reach-check goals, Nav2 goals, and published EEF targets to stamp zero so TF2 uses the latest available transform at execution time.
+  - Confirmed original FKIE orientation behavior: candidate orientation is yaw-only (`setRPY(0,0,yaw)`), where yaw maximizes unmapped volume over the horizontal FOV. Full roll/pitch viewpoint optimization remains a future extension beyond the original active repo path.
+  - Verification passed: full FKIE contract tests, FKIE script syntax checks, and `colcon build --packages-select mobile_manipulator_fkie_msgs mobile_manipulator_fkie_nbv`. Build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Tuned Nav2 away from wall-hugging after live collisions:
+  - Reduced forward max velocity from `0.30` to `0.25 m/s` and matching velocity smoother limits.
+  - Increased DWB obstacle critic weight from `0.04` to `0.25`, reduced path/goal alignment weights so the controller does not over-prioritize hugging the global path near walls.
+  - Increased inflation radius to `0.60 m`, lowered inflation cost scaling to `3.0` for a wider cost gradient, and added `0.03 m` footprint padding in local/global costmaps.
+  - Increased DWB simulation horizon to `2.0 s` for earlier obstacle response.
+  - Verification passed: full navigation contract tests, Python compile check, and `colcon build --packages-select mobile_manipulator_navigation`.
+- Improved FKIE RRT visualization:
+  - Existing `/fkie_nbv/rrt_markers` color legend: blue spheres = accepted RRT nodes, cyan line segments = RRT parent-child edges, yellow line strip = selected best branch, red spheres = cached frontier nodes.
+  - Added green line segments under namespace `fkie_rrt_best_branch_view_dirs` to show the selected branch camera/view direction at each branch node. Direction is computed from the node yaw quaternion and drawn along local +X for `0.35 m`.
+  - Verification passed: focused marker contract, full FKIE contract tests, and `colcon build --packages-select mobile_manipulator_fkie_msgs mobile_manipulator_fkie_nbv`. Build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Added arm-stow-before-base sequencing for FKIE execution:
+  - Added `/arm_named_target` support to `pose_goal_planner`; it accepts `std_msgs/String` and executes MoveIt named targets such as SRDF `home`.
+  - FKIE `nbv_arm_target_adapter` now publishes `home` on `/arm_named_target` before every Nav2 base movement when `stow_arm_before_base_motion=true`, then waits `stow_arm_wait_s` before sending the base goal.
+  - Exposed script parameters: `FKIE_ARM_NAMED_TARGET_TOPIC`, `FKIE_STOW_ARM_BEFORE_BASE_MOTION`, and `FKIE_STOW_ARM_WAIT_S`.
+  - This prevents intentional simultaneous arm/base commands, though completion is still time-gated because the named-target interface is topic-based rather than action-based.
+  - Verification passed: full MoveIt config/bridge contracts, full FKIE contracts, script syntax check, and `colcon build --packages-select mobile_manipulator_fkie_msgs mobile_manipulator_fkie_nbv mobile_manipulator_moveit_bridge`.
+- Rechecked the original FKIE ROS 1 source for iterative execution semantics:
+  - Active `executePlan()` grows RRT, returns reachable `result.goals` from the best branch when non-empty, otherwise returns `request_base_pose` from cached frontier fallback or marks `complete_exploration`.
+  - Original `extractNBVPoses()` filters the parent-chain branch by `min_gain_` and `arm_goal_range`.
+  - Original `generateGoalsToSubFrontier()` contains the reachable-prefix/sub-frontier logic, but its base pose assignment is commented out in the inspected source.
+  - Our current ROS 2 execution can proceed iteratively by repeatedly requesting a branch, executing reachable branch poses with arm MoveIt, using Nav2 fallback when needed, and requesting a fresh branch after map updates.
+- Improved FKIE RViz visualization:
+  - Target-number text markers are now yellow instead of white.
+  - Added semi-transparent voxel markers clipped to the active target area: `fkie_known_free_voxels`, `fkie_known_occupied_voxels`, and `fkie_unknown_voxels`.
+  - Unknown voxels are sampled at a downsampled visualization resolution to keep RViz responsive.
+  - Verification passed: full FKIE contract suite and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Fixed FKIE volume-map visualization refresh:
+  - Root cause: known/unknown voxel markers were only published during an `/nbv_rrt` action request, so `/octomap_full` could update continuously while RViz still showed the old snapshot.
+  - The FKIE planner now refreshes the target-area map markers from the latest `/octomap_full` callback at a throttled 1 Hz rate, reusing the last target boundary and last RRT/frontier visualization.
+  - Verification passed: focused FKIE marker contract and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Updated FKIE execution and visualization semantics:
+  - Known-free target-area voxels are now gray transparent boxes; unknown voxels are blue transparent boxes; occupied voxels remain red.
+  - Added `/fkie_nbv/execution_markers` with per-step execution target states: yellow pending, green reached, red unreachable, plus numbered labels.
+  - Added the execution marker display to `navigation.rviz`.
+  - Changed the adapter to stop moving the mobile base for intermediate branch poses. It now attempts/skips branch poses with the arm only, updates target-state markers after each motion attempt, and sends a base goal to the projection/standoff of `q_t+1` only when no branch target was reached.
+  - Verification passed: full FKIE contract suite, FKIE shell syntax, RViz contract, and `colcon build --packages-select mobile_manipulator_fkie_nbv mobile_manipulator_navigation`.
+- Simplified FKIE target numbering:
+  - Removed duplicate numbered labels from planner-side `/fkie_nbv/rrt_markers`.
+  - Kept one target number per execution target on `/fkie_nbv/execution_markers`, colored by state: yellow = unreached, green = reached, red = unreachable.
+  - Verification passed: focused FKIE marker/adapter contracts and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Fixed FKIE base fallback after partial branch execution:
+  - Root cause: the adapter only projected `q_t+1` to Nav2 when zero branch targets were reached. If early branch poses succeeded and the later branch tail became unreachable, the adapter exited without moving the mobile base.
+  - The adapter now sends a Nav2 base fallback to the projection/standoff of final branch target `q_t+1` whenever that final target was not reached by the arm.
+  - Verification passed: focused FKIE adapter contract and `colcon build --packages-select mobile_manipulator_fkie_nbv`.
+- Made FKIE volume-map visualization easier to diagnose:
+  - Split the voxel marker budget into separate caps for known-free, known-occupied, and unknown voxels so free-space markers cannot starve red occupied markers.
+  - Added a throttled planner log reporting the exact counts published in `fkie_known_free_voxels`, `fkie_known_occupied_voxels`, and `fkie_unknown_voxels`.
+  - Verification passed: focused FKIE marker contract and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Fixed empty FKIE volume markers caused by reversed z bounds:
+  - Live logs showed `z=[1.40, 0.00]`, making the boundary volume empty because no voxel can satisfy `z >= 1.40 && z <= 0.00`.
+  - The planner now normalizes incoming FKIE boundary z limits and warns when a goal arrives reversed.
+  - Verification passed: focused FKIE marker contract and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Added the first automatic FKIE exploration loop:
+  - `nbv_arm_target_adapter` now supports `auto_explore`, repeatedly requesting `/nbv_rrt`, executing the returned branch or base fallback, waiting for OctoMap updates, and stopping on `complete_exploration` or `max_exploration_iterations`.
+  - Exposed script controls: `FKIE_AUTO_EXPLORE`, `FKIE_MAX_EXPLORATION_ITERATIONS`, `FKIE_MAP_UPDATE_WAIT_S`, and `FKIE_CONTINUE_ON_MOTION_FAILURE`.
+  - Added planner-side `max_branch_nodes` to bound how many branch poses are returned per iteration.
+  - Verification passed: focused FKIE planner/adapter contracts, script syntax check, and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Fixed automatic exploration blocking on failed arm stow:
+  - Live auto-exploration showed Nav2 fallback goals were computed but not sent because MoveIt failed the `home` named-target action before base motion.
+  - Added `continue_base_on_stow_failure` to let simulation continue with the base fallback after logging the failed stow; it defaults to `true` and is exposed as `FKIE_CONTINUE_BASE_ON_STOW_FAILURE`.
+  - Verification passed: focused FKIE adapter contract, script syntax check, and `colcon build --packages-select mobile_manipulator_fkie_nbv`.
+- Made FKIE target-area voxel visualization limits runtime-configurable:
+  - Added planner parameters `max_known_free_marker_voxels`, `max_known_occupied_marker_voxels`, and `max_unknown_marker_voxels`.
+  - Defaults are `5000` known-free, `20000` known-occupied, and `10000` unknown voxels, so occupied pipe voxels are less likely to be hidden by the RViz marker cap.
+  - Verification passed: focused FKIE marker contract and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Added `--spawn X Y Z YAW` to `start_controlled_rooms_mobile_manipulator.sh`:
+  - The controlled-room convenience launcher can now override the Isaac robot spawn pose without editing `ROBOT_SPAWN` in the script.
+  - Verification passed: shell syntax check, focused navigation launcher contract, and dry-run with `--spawn -3.0 -4.0 0.6 1.57 --use-wrist-octomap`.
+- Increased FKIE occupied-voxel RViz marker budget:
+  - Raised the default `max_known_occupied_marker_voxels` from `20000` to `50000`.
+  - Added launch arguments for `max_known_free_marker_voxels`, `max_known_occupied_marker_voxels`, and `max_unknown_marker_voxels`, so marker budgets can be changed without editing YAML.
+  - Verification passed: focused FKIE marker/launch contracts and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.
+- Tuned FKIE RRT sampling for the next live Isaac trial:
+  - Set `utility_weight_euclidean_cost` to `0.5` so long RRT branches are penalized during best-node selection.
+  - Lowered `arm_height_min` from `0.4` to `0.15` so candidate camera poses can sample lower viewpoints while staying above the floor.
+  - Verification passed: focused FKIE config contract and `colcon build --packages-select mobile_manipulator_fkie_nbv`; build stderr only contains the upstream OctoMap deprecated `std::iterator` warning.

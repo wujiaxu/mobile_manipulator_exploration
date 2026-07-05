@@ -1,0 +1,17 @@
+std_msgs/Header header
+int16 boundary_id
+string boundary_source_type
+string boundary_frame_id
+float64 boundary_min_z
+float64 boundary_max_z
+float64[] boundary_x
+float64[] boundary_y
+mobile_manipulator_fkie_msgs/MeasurementEstimation estimations
+bool arm_in_prepacked
+---
+geometry_msgs/PoseStamped[] goals
+bool request_base_pose
+geometry_msgs/PoseStamped goal_pose_3d
+bool complete_exploration
+int16 explored_boundary_id
+---

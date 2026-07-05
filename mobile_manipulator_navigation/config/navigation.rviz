@@ -53,6 +53,16 @@ Visualization Manager:
       Axis: Z
       Size (Pixels): 3
       Style: Boxes
+    - Class: rviz_default_plugins/MarkerArray
+      Name: FKIE RRT Tree
+      Enabled: true
+      Topic:
+        Value: /fkie_nbv/rrt_markers
+    - Class: rviz_default_plugins/MarkerArray
+      Name: FKIE Execution Targets
+      Enabled: true
+      Topic:
+        Value: /fkie_nbv/execution_markers
     - Class: rviz_default_plugins/Map
       Name: Global Costmap
       Enabled: true

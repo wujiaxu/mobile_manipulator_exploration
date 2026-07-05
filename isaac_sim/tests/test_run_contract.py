@@ -61,11 +61,11 @@ class RunnerArgumentTest(unittest.TestCase):
         self.assertIn('stage.GetPrimAtPath(Sdf.Path("/mobile_manipulator/base_link"))', source)
         self.assertIn("base_xform.SetTranslate", source)
         self.assertIn(
-            "robot_xform.SetTranslate((ROBOT_SPAWN[0], ROBOT_SPAWN[1], 0.0))",
+            "robot_xform.SetTranslate((spawn_pose_values[0], spawn_pose_values[1], 0.0))",
             source,
         )
         self.assertIn(
-            "base_xform.SetTranslate((0.0, 0.0, ROBOT_SPAWN[2]))",
+            "base_xform.SetTranslate((0.0, 0.0, spawn_pose_values[2]))",
             source,
         )
         self.assertIn("get_articulation_root_body", source)
@@ -74,6 +74,22 @@ class RunnerArgumentTest(unittest.TestCase):
         self.assertIn("set_rigid_body_angular_velocity", source)
         self.assertNotIn("getattr(args, \"robot_spawn\"", source)
         self.assertNotIn("ROBOT_SPAWN = getattr", source)
+
+    def test_runners_apply_observation_arm_start_pose(self):
+        factory_source = FACTORY_RUNNER.read_text(encoding="utf-8")
+        standalone_source = RUNNER.read_text(encoding="utf-8")
+        for source in (factory_source, standalone_source):
+            for literal in (
+                "OBSERVATION_ARM_JOINT_POSITIONS",
+                '"joint1": 1.5707963267948966',
+                '"joint6": -1.5707963267948966',
+                '"joint7": 1.5707963267948966',
+                "find_articulation_dof",
+                "set_dof_position",
+                "set_dof_position_target",
+                "apply_observation_arm_pose",
+            ):
+                self.assertIn(literal, source)
 
 
 if __name__ == "__main__":

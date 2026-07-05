@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>mobile_manipulator_fkie_nbv</name>
+  <version>0.1.0</version>
+  <description>ROS 2 FKIE NBV planner reproduction package for the mobile manipulator.</description>
+  <maintainer email="user@example.com">user</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>geometry_msgs</depend>
+  <depend>mobile_manipulator_fkie_msgs</depend>
+  <depend>mobile_manipulator_moveit_bridge</depend>
+  <depend>nav2_msgs</depend>
+  <depend>octomap</depend>
+  <depend>octomap_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

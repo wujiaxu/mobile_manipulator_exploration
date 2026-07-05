@@ -145,6 +145,10 @@ private:
       }
     }
 
+    if (collision_object.primitives.empty()) {
+      collision_object.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+    }
+
     moveit_msgs::msg::PlanningScene scene;
     scene.is_diff = true;
     scene.world.collision_objects.push_back(collision_object);

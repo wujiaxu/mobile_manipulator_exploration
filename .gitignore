@@ -47,4 +47,3 @@ build/isaac_import/
 # Generated Isaac USD assets
 isaac_sim/assets/**/*.usd
 
-*.md

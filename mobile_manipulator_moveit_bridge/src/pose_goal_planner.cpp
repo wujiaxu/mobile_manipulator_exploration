@@ -3,10 +3,14 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "mobile_manipulator_moveit_bridge/action/move_arm.hpp"
 #include "moveit/move_group_interface/move_group_interface.h"
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "tf2/exceptions.h"
 #include "tf2/time.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -20,6 +24,8 @@ namespace
 {
 
 constexpr char kTargetTopic[] = "/arm_target_pose";
+constexpr char kNamedTargetTopic[] = "/arm_named_target";
+constexpr char kMoveArmAction[] = "/move_arm";
 constexpr char kPlanningGroup[] = "xarm7";
 constexpr char kEndEffectorLink[] = "link_eef";
 constexpr char kPlanningFrame[] = "base_link";
@@ -50,6 +56,9 @@ private:
 class PoseGoalPlanner
 {
 public:
+  using MoveArm = mobile_manipulator_moveit_bridge::action::MoveArm;
+  using GoalHandleMoveArm = rclcpp_action::ServerGoalHandle<MoveArm>;
+
   explicit PoseGoalPlanner(const rclcpp::Node::SharedPtr & node)
   : node_(node),
     tf_buffer_(node_->get_clock()),
@@ -73,38 +82,186 @@ public:
         target_callback(message);
       },
       options);
+    named_target_subscription_ = node_->create_subscription<std_msgs::msg::String>(
+      kNamedTargetTopic, 10,
+      [this](const std_msgs::msg::String::SharedPtr message) {
+        execute_named_target(message->data);
+      },
+      options);
+    action_server_ = rclcpp_action::create_server<MoveArm>(
+      node_,
+      kMoveArmAction,
+      [this](
+        const rclcpp_action::GoalUUID &,
+        std::shared_ptr<const MoveArm::Goal> goal)
+      {
+        return handle_goal(goal);
+      },
+      [this](const std::shared_ptr<GoalHandleMoveArm>) {
+        return rclcpp_action::CancelResponse::ACCEPT;
+      },
+      [this](const std::shared_ptr<GoalHandleMoveArm> goal_handle) {
+        std::thread{[this, goal_handle]() {execute_move_arm_goal(goal_handle);}}.detach();
+      });
   }
 
 private:
+  rclcpp_action::GoalResponse handle_goal(const std::shared_ptr<const MoveArm::Goal> & goal)
+  {
+    if (goal->use_named_target) {
+      if (goal->named_target.empty()) {
+        RCLCPP_ERROR(node_->get_logger(), "Rejecting MoveArm goal with empty named target");
+        return rclcpp_action::GoalResponse::REJECT;
+      }
+      return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+    }
+    if (goal->target_pose.header.frame_id.empty() || !finite_pose(goal->target_pose.pose)) {
+      RCLCPP_ERROR(node_->get_logger(), "Rejecting MoveArm pose goal with invalid target pose");
+      return rclcpp_action::GoalResponse::REJECT;
+    }
+    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+  }
+
+  void publish_feedback(
+    const std::shared_ptr<GoalHandleMoveArm> & goal_handle,
+    const std::string & phase) const
+  {
+    auto feedback = std::make_shared<MoveArm::Feedback>();
+    feedback->phase = phase;
+    goal_handle->publish_feedback(feedback);
+  }
+
+  void finish_action(
+    const std::shared_ptr<GoalHandleMoveArm> & goal_handle,
+    const bool success,
+    const std::string & message) const
+  {
+    auto result = std::make_shared<MoveArm::Result>();
+    result->success = success;
+    result->message = message;
+    if (success) {
+      goal_handle->succeed(result);
+    } else {
+      goal_handle->abort(result);
+    }
+  }
+
+  void execute_move_arm_goal(const std::shared_ptr<GoalHandleMoveArm> & goal_handle)
+  {
+    const auto goal = goal_handle->get_goal();
+    if (goal->use_named_target) {
+      execute_named_target(goal->named_target, goal_handle);
+    } else {
+      execute_pose_target(goal->target_pose, goal_handle);
+    }
+  }
+
+  bool execute_named_target(
+    const std::string & target_name,
+    const std::shared_ptr<GoalHandleMoveArm> & goal_handle = nullptr)
+  {
+    bool expected = false;
+    if (!busy_.compare_exchange_strong(expected, true)) {
+      RCLCPP_ERROR(node_->get_logger(), "Rejecting named target '%s' while the arm is busy", target_name.c_str());
+      if (goal_handle) {
+        finish_action(goal_handle, false, "arm is busy");
+      }
+      return false;
+    }
+    BusyReset reset(busy_);
+
+    if (goal_handle) {
+      publish_feedback(goal_handle, "planning_named_target");
+    }
+    move_group_.setStartStateToCurrentState();
+    if (!move_group_.setNamedTarget(target_name)) {
+      RCLCPP_ERROR(node_->get_logger(), "MoveIt rejected named target '%s'", target_name.c_str());
+      move_group_.clearPoseTargets();
+      if (goal_handle) {
+        finish_action(goal_handle, false, "MoveIt rejected named target");
+      }
+      return false;
+    }
+
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+    const auto planning_result = move_group_.plan(plan);
+    if (!planning_result) {
+      RCLCPP_ERROR(node_->get_logger(), "MoveIt failed to plan named target '%s'", target_name.c_str());
+      move_group_.clearPoseTargets();
+      if (goal_handle) {
+        finish_action(goal_handle, false, "MoveIt failed to plan named target");
+      }
+      return false;
+    }
+
+    RCLCPP_INFO(node_->get_logger(), "MoveIt named target '%s' plan succeeded; starting execution", target_name.c_str());
+    if (goal_handle) {
+      publish_feedback(goal_handle, "executing_named_target");
+    }
+    const auto execution_result = move_group_.execute(plan);
+    move_group_.clearPoseTargets();
+    if (!execution_result) {
+      RCLCPP_ERROR(node_->get_logger(), "MoveIt named target '%s' execution failed", target_name.c_str());
+      if (goal_handle) {
+        finish_action(goal_handle, false, "MoveIt named target execution failed");
+      }
+      return false;
+    }
+    RCLCPP_INFO(node_->get_logger(), "MoveIt named target '%s' execution succeeded", target_name.c_str());
+    if (goal_handle) {
+      finish_action(goal_handle, true, "MoveIt named target execution succeeded");
+    }
+    return true;
+  }
+
   void target_callback(const geometry_msgs::msg::PoseStamped::SharedPtr message)
+  {
+    (void)execute_pose_target(*message);
+  }
+
+  bool execute_pose_target(
+    const geometry_msgs::msg::PoseStamped & message,
+    const std::shared_ptr<GoalHandleMoveArm> & goal_handle = nullptr)
   {
     bool expected = false;
     if (!busy_.compare_exchange_strong(expected, true)) {
       RCLCPP_ERROR(node_->get_logger(), "Rejecting pose target while the arm is busy");
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "arm is busy");
+      }
+      return false;
     }
     BusyReset reset(busy_);
 
-    if (message->header.frame_id.empty()) {
+    if (message.header.frame_id.empty()) {
       RCLCPP_ERROR(node_->get_logger(), "Rejecting pose target with an empty frame_id");
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "empty target frame");
+      }
+      return false;
     }
-    if (!finite_pose(message->pose)) {
+    if (!finite_pose(message.pose)) {
       RCLCPP_ERROR(node_->get_logger(), "Rejecting pose target with non-finite values");
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "non-finite target pose");
+      }
+      return false;
     }
 
     const double quaternion_norm = std::sqrt(
-      message->pose.orientation.x * message->pose.orientation.x +
-      message->pose.orientation.y * message->pose.orientation.y +
-      message->pose.orientation.z * message->pose.orientation.z +
-      message->pose.orientation.w * message->pose.orientation.w);
+      message.pose.orientation.x * message.pose.orientation.x +
+      message.pose.orientation.y * message.pose.orientation.y +
+      message.pose.orientation.z * message.pose.orientation.z +
+      message.pose.orientation.w * message.pose.orientation.w);
     if (quaternion_norm < 1e-9) {
       RCLCPP_ERROR(node_->get_logger(), "Rejecting pose target with a zero quaternion");
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "zero target quaternion");
+      }
+      return false;
     }
 
-    geometry_msgs::msg::PoseStamped normalized = *message;
+    geometry_msgs::msg::PoseStamped normalized = message;
     normalized.pose.orientation.x /= quaternion_norm;
     normalized.pose.orientation.y /= quaternion_norm;
     normalized.pose.orientation.z /= quaternion_norm;
@@ -118,14 +275,23 @@ private:
       RCLCPP_ERROR(
         node_->get_logger(), "Cannot transform pose target from %s to %s: %s",
         normalized.header.frame_id.c_str(), kPlanningFrame, error.what());
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "cannot transform pose target");
+      }
+      return false;
     }
 
+    if (goal_handle) {
+      publish_feedback(goal_handle, "planning_pose_target");
+    }
     move_group_.setStartStateToCurrentState();
     if (!move_group_.setPoseTarget(target, kEndEffectorLink)) {
       RCLCPP_ERROR(node_->get_logger(), "MoveIt rejected the link_eef pose target");
       move_group_.clearPoseTargets();
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "MoveIt rejected pose target");
+      }
+      return false;
     }
 
     moveit::planning_interface::MoveGroupInterface::Plan plan;
@@ -134,17 +300,30 @@ private:
       RCLCPP_ERROR(
         node_->get_logger(), "MoveIt failed to plan the requested link_eef pose");
       move_group_.clearPoseTargets();
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "MoveIt failed to plan pose target");
+      }
+      return false;
     }
     RCLCPP_INFO(node_->get_logger(), "MoveIt pose plan succeeded; starting execution");
 
+    if (goal_handle) {
+      publish_feedback(goal_handle, "executing_pose_target");
+    }
     const auto execution_result = move_group_.execute(plan);
     move_group_.clearPoseTargets();
     if (!execution_result) {
       RCLCPP_ERROR(node_->get_logger(), "MoveIt pose execution failed");
-      return;
+      if (goal_handle) {
+        finish_action(goal_handle, false, "MoveIt pose execution failed");
+      }
+      return false;
     }
     RCLCPP_INFO(node_->get_logger(), "MoveIt pose execution succeeded");
+    if (goal_handle) {
+      finish_action(goal_handle, true, "MoveIt pose execution succeeded");
+    }
+    return true;
   }
 
   rclcpp::Node::SharedPtr node_;
@@ -153,6 +332,8 @@ private:
   moveit::planning_interface::MoveGroupInterface move_group_;
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr subscription_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr named_target_subscription_;
+  rclcpp_action::Server<MoveArm>::SharedPtr action_server_;
   std::atomic_bool busy_{false};
 };
 

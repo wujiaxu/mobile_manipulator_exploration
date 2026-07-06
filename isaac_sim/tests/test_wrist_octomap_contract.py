@@ -54,6 +54,11 @@ class WristOctomapContractTest(unittest.TestCase):
         self.assertEqual(params["camera_pose_topic"], "/camera_pose")
         self.assertEqual(params["resolution"], 0.05)
         self.assertGreater(params["max_range"], 0.0)
+        self.assertTrue(params["self_filter_enabled"])
+        self.assertEqual(params["self_filter_frame"], "base_link")
+        self.assertLess(params["self_filter_min_x"], params["self_filter_max_x"])
+        self.assertLess(params["self_filter_min_y"], params["self_filter_max_y"])
+        self.assertLess(params["self_filter_min_z"], params["self_filter_max_z"])
 
     def test_octomap_node_publishes_fkie_compatible_mapping_topics(self):
         self.assertTrue(SRC.is_file(), SRC)
@@ -85,6 +90,10 @@ class WristOctomapContractTest(unittest.TestCase):
             "binary_octomap_publisher_",
             "occupied_cloud_publisher_",
             "camera_pose_publisher_",
+            "self_filter_enabled_",
+            "self_filter_frame_",
+            "inside_self_filter_box",
+            "self_filter_transform",
         ):
             self.assertIn(required, source)
 
@@ -160,6 +169,11 @@ class WristOctomapContractTest(unittest.TestCase):
             "/wrist_camera/depth/points",
             "Wrist OctoMap Occupied Voxels",
             "/octomap_occupied_points",
+            "FKIE RRT Tree",
+            "FKIE Execution Targets",
+            "rviz_default_plugins/MarkerArray",
+            "/fkie_nbv/rrt_markers",
+            "/fkie_nbv/execution_markers",
             "Color Transformer: AxisColor",
             "Axis: Z",
         ):

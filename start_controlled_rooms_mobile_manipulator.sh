@@ -27,12 +27,14 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: ./start_controlled_rooms_mobile_manipulator.sh [--use-moveit-rviz] [--dry-run]
+Usage: ./start_controlled_rooms_mobile_manipulator.sh [--spawn X Y Z YAW] [--use-moveit-rviz] [--dry-run]
 
 Starts the controlled rooms Isaac scene, SLAM Toolbox, Nav2, RViz2, MoveIt,
 and the Isaac arm trajectory bridge.
 
 Options:
+  --spawn X Y Z YAW  Override the Isaac robot spawn pose.
+                     X/Y/Z are meters; YAW is radians.
   --use-moveit-rviz  Also start MoveIt RViz for GUI arm pose targets.
                      This opens a second RViz window in addition to Nav2 RViz.
   --use-wrist-octomap
@@ -100,6 +102,11 @@ while (($#)); do
       ;;
     --use-wrist-octomap|use_wrist_octomap:=true)
       use_wrist_octomap=true
+      ;;
+    --spawn)
+      (($# >= 5)) || fail "--spawn requires four values: X Y Z YAW"
+      ROBOT_SPAWN=("$2" "$3" "$4" "$5")
+      shift 4
       ;;
     -h|--help)
       usage

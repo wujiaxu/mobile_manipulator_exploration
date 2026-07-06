@@ -115,6 +115,32 @@ class MoveItConfigContractTest(unittest.TestCase):
             self.assertTrue(joint["has_velocity_limits"])
             self.assertEqual(joint["max_velocity"], velocity)
 
+    def test_initial_positions_use_observation_camera_pose(self):
+        positions = self.load_yaml("initial_positions.yaml")["initial_positions"]
+        self.assertEqual(positions["joint1"], 1.5707963267948966)
+        self.assertEqual(positions["joint2"], 0.0)
+        self.assertEqual(positions["joint3"], 0.0)
+        self.assertEqual(positions["joint4"], 0.0)
+        self.assertEqual(positions["joint5"], 0.0)
+        self.assertEqual(positions["joint6"], -1.5707963267948966)
+        self.assertEqual(positions["joint7"], 1.5707963267948966)
+
+    def test_srdf_home_matches_observation_camera_pose(self):
+        srdf = self.load_xml("config/mobile_manipulator.srdf")
+        home = srdf.find("./group_state[@name='home'][@group='xarm7']")
+        self.assertIsNotNone(home)
+        joints = {
+            joint.attrib["name"]: float(joint.attrib["value"])
+            for joint in home.findall("joint")
+        }
+        self.assertEqual(joints["joint1"], 1.5707963267948966)
+        self.assertEqual(joints["joint2"], 0.0)
+        self.assertEqual(joints["joint3"], 0.0)
+        self.assertEqual(joints["joint4"], 0.0)
+        self.assertEqual(joints["joint5"], 0.0)
+        self.assertEqual(joints["joint6"], -1.5707963267948966)
+        self.assertEqual(joints["joint7"], 1.5707963267948966)
+
 
 class MoveItBridgeContractTest(unittest.TestCase):
     def test_bridge_manifest_declares_control_dependencies(self):
@@ -165,7 +191,34 @@ class MoveItBridgeContractTest(unittest.TestCase):
         source_path = BRIDGE_PACKAGE / "src/pose_goal_planner.cpp"
         self.assertTrue(source_path.is_file(), source_path)
         source = source_path.read_text(encoding="utf-8")
-        for literal in ("/arm_target_pose", "xarm7", "link_eef", "base_link"):
+        action = (BRIDGE_PACKAGE / "action/MoveArm.action").read_text(
+            encoding="utf-8"
+        )
+        for literal in (
+            "geometry_msgs/PoseStamped target_pose",
+            "string named_target",
+            "bool use_named_target",
+            "bool success",
+            "string message",
+            "string phase",
+        ):
+            self.assertIn(literal, action)
+        for literal in (
+            "/arm_target_pose",
+            "/arm_named_target",
+            "/move_arm",
+            "mobile_manipulator_moveit_bridge/action/move_arm.hpp",
+            "rclcpp_action::Server",
+            "std_msgs/msg/string.hpp",
+            "setNamedTarget",
+            "execute_move_arm_goal",
+            "goal_handle->succeed",
+            "goal_handle->abort",
+            "execute_named_target",
+            "xarm7",
+            "link_eef",
+            "base_link",
+        ):
             self.assertIn(literal, source)
 
         package = ET.parse(BRIDGE_PACKAGE / "package.xml").getroot()
@@ -177,6 +230,8 @@ class MoveItBridgeContractTest(unittest.TestCase):
         expected = {
             "geometry_msgs",
             "moveit_ros_planning_interface",
+            "rosidl_default_runtime",
+            "std_msgs",
             "tf2_geometry_msgs",
             "tf2_ros",
         }
@@ -184,6 +239,8 @@ class MoveItBridgeContractTest(unittest.TestCase):
 
         cmake = (BRIDGE_PACKAGE / "CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("add_executable(pose_goal_planner", cmake)
+        self.assertIn("rosidl_generate_interfaces", cmake)
+        self.assertIn("action/MoveArm.action", cmake)
 
     def test_octomap_voxel_bridge_publishes_planning_scene_diff(self):
         source_path = BRIDGE_PACKAGE / "src/octomap_voxel_planning_scene_bridge.cpp"
@@ -211,6 +268,8 @@ class MoveItBridgeContractTest(unittest.TestCase):
             "max_boxes",
             "nbv_octomap_occupied_voxels",
             "CollisionObject::ADD",
+            "collision_object.primitives.empty()",
+            "CollisionObject::REMOVE",
             "scene.is_diff = true",
         ):
             self.assertIn(literal, source)

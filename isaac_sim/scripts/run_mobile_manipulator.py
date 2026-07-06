@@ -5,6 +5,25 @@ from pathlib import Path
 
 from factory_layout import ROBOT_CLEARANCE_Z
 
+OBSERVATION_ARM_JOINT_POSITIONS = {
+    "joint1": 1.5707963267948966,
+    "joint2": 0.0,
+    "joint3": 0.0,
+    "joint4": 0.0,
+    "joint5": 0.0,
+    "joint6": -1.5707963267948966,
+    "joint7": 1.5707963267948966,
+}
+
+
+def apply_observation_arm_pose(dynamic_control, articulation_handle, invalid_handle):
+    for joint_name, joint_position in OBSERVATION_ARM_JOINT_POSITIONS.items():
+        dof_handle = dynamic_control.find_articulation_dof(articulation_handle, joint_name)
+        if dof_handle == invalid_handle:
+            raise RuntimeError(f"Could not find arm DOF: {joint_name}")
+        dynamic_control.set_dof_position(dof_handle, joint_position)
+        dynamic_control.set_dof_position_target(dof_handle, joint_position)
+
 
 def parse_args(argv=None):
     workspace = Path(__file__).resolve().parents[2]
@@ -131,13 +150,14 @@ def main():
     timeline = omni.timeline.get_timeline_interface()
     timeline.play()
     simulation_app.update()
-    dynamic_control = None
+    dynamic_control = _dynamic_control.acquire_dynamic_control_interface()
+    articulation_handle = dynamic_control.get_articulation(articulation_path)
+    if articulation_handle == _dynamic_control.INVALID_HANDLE:
+        raise RuntimeError(f"Could not access articulation: {articulation_path}")
+    apply_observation_arm_pose(dynamic_control, articulation_handle, _dynamic_control.INVALID_HANDLE)
+    simulation_app.update()
     root_body = None
     if args.pose_report_period > 0:
-        dynamic_control = _dynamic_control.acquire_dynamic_control_interface()
-        articulation_handle = dynamic_control.get_articulation(articulation_path)
-        if articulation_handle == _dynamic_control.INVALID_HANDLE:
-            raise RuntimeError(f"Could not access articulation: {articulation_path}")
         root_body = dynamic_control.get_articulation_root_body(articulation_handle)
     started = time.monotonic()
     next_pose_report = started

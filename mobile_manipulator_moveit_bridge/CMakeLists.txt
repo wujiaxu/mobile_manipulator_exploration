@@ -12,12 +12,19 @@ find_package(moveit_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(shape_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_sensor_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "action/MoveArm.action"
+  DEPENDENCIES geometry_msgs
+)
 
 add_library(trajectory_sampler src/trajectory_sampler.cpp)
 target_include_directories(trajectory_sampler PUBLIC
@@ -38,11 +45,15 @@ ament_target_dependencies(
 )
 
 add_executable(pose_goal_planner src/pose_goal_planner.cpp)
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(pose_goal_planner "${cpp_typesupport_target}")
 ament_target_dependencies(
   pose_goal_planner
   geometry_msgs
   moveit_ros_planning_interface
   rclcpp
+  rclcpp_action
+  std_msgs
   tf2_geometry_msgs
   tf2_ros
 )

@@ -11,6 +11,25 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from factory_layout import ROBOT_SPAWN
 
+OBSERVATION_ARM_JOINT_POSITIONS = {
+    "joint1": 1.5707963267948966,
+    "joint2": 0.0,
+    "joint3": 0.0,
+    "joint4": 0.0,
+    "joint5": 0.0,
+    "joint6": -1.5707963267948966,
+    "joint7": 1.5707963267948966,
+}
+
+
+def apply_observation_arm_pose(dynamic_control, articulation_handle, invalid_handle):
+    for joint_name, joint_position in OBSERVATION_ARM_JOINT_POSITIONS.items():
+        dof_handle = dynamic_control.find_articulation_dof(articulation_handle, joint_name)
+        if dof_handle == invalid_handle:
+            raise RuntimeError(f"Could not find arm DOF: {joint_name}")
+        dynamic_control.set_dof_position(dof_handle, joint_position)
+        dynamic_control.set_dof_position_target(dof_handle, joint_position)
+
 
 def parse_args(argv=None):
     workspace = Path(__file__).resolve().parents[2]
@@ -171,6 +190,7 @@ def main():
     dynamic_control.set_rigid_body_pose(root_body, spawn_pose)
     dynamic_control.set_rigid_body_linear_velocity(root_body, (0.0, 0.0, 0.0))
     dynamic_control.set_rigid_body_angular_velocity(root_body, (0.0, 0.0, 0.0))
+    apply_observation_arm_pose(dynamic_control, articulation_handle, _dynamic_control.INVALID_HANDLE)
     dynamic_control.wake_up_articulation(articulation_handle)
     app.update()
     

@@ -1,0 +1,8 @@
+geometry_msgs/PoseStamped target_pose
+string named_target
+bool use_named_target
+---
+bool success
+string message
+---
+string phase

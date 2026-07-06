@@ -4,7 +4,18 @@
 
 Add MoveIt 2 end-effector pose control for the unified mobile manipulator in Isaac Sim 4.5.
 
-## Current Milestone: Map-Frame Wrist OctoMap for Exploration
+## Current Milestone: FKIE NBV Candidate Execution Through MoveIt
+
+- [x] Create ROS 2 FKIE-style action messages and a native `/nbv_rrt` action server.
+- [x] Feed the planner with `/camera_pose`, `/octomap_full`, and the passive map-frame footprint.
+- [x] Fix ROS 2 action transport by flattening the boundary polygon into `boundary_x`/`boundary_y` arrays.
+- [x] Produce a non-empty OctoMap gain-scored NBV candidate from a live Isaac map.
+- [x] Add a one-shot adapter that requests one NBV candidate and publishes a converted `link_eef` target to `/arm_target_pose`.
+- [ ] Replace the current simplified candidate sampler with a ROS 2 port of the original FKIE RRT planner: RRT nodes, KD-tree nearest-neighbor expansion, gain cubature, cached frontiers, parent-chain branch extraction, and original `goals`/`request_base_pose` result semantics.
+- [ ] Keep execution adapters thin: if planner returns `goals`, send arm goals; if planner returns `request_base_pose`, send a Nav2 goal from `goal_pose_3d`.
+- [ ] Live-test the original-algorithm ROS 2 planner with Isaac, MoveIt, OctoMap, Nav2, and RViz running.
+
+## Previous Milestone: Map-Frame Wrist OctoMap for Exploration
 
 - [x] Inspect current Isaac ROS topics, installed Nav2 packages, and sensor extensions.
 - [x] Select online SLAM Toolbox with a temporary 360-degree 2D LiDAR.
@@ -70,3 +81,4 @@ Add MoveIt 2 end-effector pose control for the unified mobile manipulator in Isa
 - The factory runner initially passed a graph descriptor dictionary to `Controller.edit`, which always creates a graph and failed because `/ActionGraph` came from the robot USD. After switching to the existing graph handle, the pre-existing tick node also required its absolute attribute path. Both issues are covered by a regression contract and a live bounded Isaac run.
 - The installed MoveIt occupancy map monitor package provides `moveit_ros_occupancy_map_server`, but this host does not expose the normal point-cloud updater plugin XML. A project-owned OctoMap node is used for the exploration map instead of depending on MoveIt-only map monitoring.
 - The host does not have `octomap_rviz_plugins`, so RViz cannot natively display `octomap_msgs/msg/Octomap`. The project publishes `/octomap_occupied_points` as an RViz-compatible occupied-voxel `PointCloud2` visualization topic.
+- The first FKIE NBV arm execution reached MoveIt through `/arm_target_pose`, but OMPL reported `Unable to sample any valid states for goal tree`. This confirmed action transport and execution plumbing, but the project direction is now to reproduce the original FKIE RRT algorithm first instead of adding workaround target filtering around the simplified sampler.

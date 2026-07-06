@@ -15,6 +15,7 @@ IMPORTER = ISAAC_DIR / "scripts/import_mobile_manipulator.py"
 ROOT = ISAAC_DIR.parent
 NAV_PACKAGE = ROOT / "mobile_manipulator_navigation"
 LAUNCHER = ROOT / "start_navigation_test.sh"
+MOBILE_MANIPULATOR_LAUNCHER = ROOT / "start_controlled_rooms_mobile_manipulator.sh"
 
 
 class FactoryNavigationRunnerContract(unittest.TestCase):
@@ -153,8 +154,16 @@ class NavigationPackageContract(unittest.TestCase):
     def test_nav2_costmaps_and_speed_contract(self):
         config = yaml.safe_load(self.nav2_path.read_text())
         controller = config["controller_server"]["ros__parameters"]
-        self.assertLessEqual(controller["FollowPath"]["max_vel_x"], 0.35)
+        self.assertLessEqual(controller["FollowPath"]["max_vel_x"], 0.25)
         self.assertLessEqual(controller["FollowPath"]["max_vel_theta"], 0.8)
+        self.assertGreaterEqual(controller["FollowPath"]["BaseObstacle.scale"], 0.20)
+        self.assertLessEqual(controller["FollowPath"]["PathAlign.scale"], 16.0)
+        self.assertLessEqual(controller["FollowPath"]["GoalAlign.scale"], 16.0)
+        self.assertGreaterEqual(controller["FollowPath"]["transform_tolerance"], 1.0)
+        goal_checker = controller["general_goal_checker"]
+        self.assertGreaterEqual(goal_checker["xy_goal_tolerance"], 0.30)
+        self.assertGreaterEqual(goal_checker["yaw_goal_tolerance"], 3.14)
+        self.assertGreaterEqual(controller["FollowPath"]["xy_goal_tolerance"], 0.30)
         for server_name in ("global_costmap", "local_costmap"):
             params = config[server_name][server_name]["ros__parameters"]
             self.assertEqual(params["robot_base_frame"], "base_link")
@@ -165,6 +174,11 @@ class NavigationPackageContract(unittest.TestCase):
                 params["obstacle_layer"]["scan"]["data_type"], "LaserScan"
             )
             self.assertIn("footprint", params)
+            self.assertLessEqual(params["footprint_padding"], 0.01)
+            self.assertGreaterEqual(params["transform_tolerance"], 1.0)
+            inflation = params["inflation_layer"]
+            self.assertLessEqual(inflation["inflation_radius"], 0.45)
+            self.assertLessEqual(inflation["cost_scaling_factor"], 4.0)
         local_params = config["local_costmap"]["local_costmap"]["ros__parameters"]
         self.assertIs(type(local_params["width"]), int)
         self.assertIs(type(local_params["height"]), int)
@@ -219,6 +233,30 @@ class NavigationLauncherContract(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Isaac navigation command:", result.stdout)
         self.assertIn("ROS navigation command:", result.stdout)
+
+
+class ControlledRoomsMobileManipulatorLauncherContract(unittest.TestCase):
+    def test_launcher_accepts_spawn_override(self):
+        result = subprocess.run(
+            [
+                str(MOBILE_MANIPULATOR_LAUNCHER),
+                "--spawn",
+                "-3.0",
+                "-4.0",
+                "0.6",
+                "1.57",
+                "--use-wrist-octomap",
+                "--dry-run",
+            ],
+            cwd="/tmp",
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--spawn -3.0 -4.0 0.6 1.57", result.stdout)
+        self.assertIn("Wrist OctoMap command:", result.stdout)
 
 
 if __name__ == "__main__":

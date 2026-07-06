@@ -45,7 +45,7 @@ frames_*.pdf
 build/isaac_import/
 
 # Generated Isaac USD assets
-isaac_sim/assets/**/*.usd
+# isaac_sim/assets/**/*.usd
 
 *.md
 !README.md

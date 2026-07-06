@@ -39,7 +39,7 @@ frames_*.pdf
 .codex/
 
 # Local third-party source checkouts used for inspection/porting
-third_party/
+# third_party/
 
 # Generated Isaac import intermediates
 build/isaac_import/

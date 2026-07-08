@@ -1,0 +1,52 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 50 # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    base_controller:
+      type: diff_drive_controller/DiffDriveController
+
+arm_controller:
+  ros__parameters:
+    joints:
+      - joint1
+      - joint2
+      - joint3
+      - joint4
+      - joint5
+      - joint6
+      - joint7
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    open_loop_control: true
+    allow_integration_in_trajectory_controllers: true
+
+base_controller:
+  ros__parameters:
+    left_wheel_names: ["left_wheel"]
+    right_wheel_names: ["right_wheel"]
+
+    wheel_separation: 0.34
+    wheel_radius: 0.082
+
+    use_stamped_vel: false
+    base_frame_id: base_link
+    odom_frame_id: odom
+
+    linear.x.has_velocity_limits: true
+    linear.x.max_velocity: 1.5
+    linear.x.has_acceleration_limits: true
+    linear.x.max_acceleration: 2.5
+
+    angular.z.has_velocity_limits: true
+    angular.z.max_velocity: 2.0
+    angular.z.has_acceleration_limits: true
+    angular.z.max_acceleration: 4.0

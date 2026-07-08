@@ -1,0 +1,101 @@
+<?xml version="1.0"?>
+<robot name="mobile_manipulator" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  
+  <!-- Include your sub-assemblies -->
+  <xacro:include filename="$(find mobile_manipulator_description)/urdf/tracer_base_gazebo.urdf.xacro"/>
+  <xacro:include filename="$(find mobile_manipulator_description)/urdf/xarm7_gazebo.urdf.xacro"/>
+
+  <!-- Instantiate sub-assemblies -->
+  <xacro:tracer_base/>
+  <xacro:xarm7/>
+
+  <!-- Calibration aliases used by the recorded platform TF tree. -->
+  <!-- FIXED: Added dummy inertial properties so Gazebo won't ignore or crash on this link -->
+  <link name="frame_base">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.1"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="base_link_to_frame_base" type="fixed">
+    <parent link="base_link"/>
+    <child link="frame_base"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="arm_support_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="10.0"/>
+      <inertia
+        ixx="0.2807770732" ixy="0" ixz="0"
+        iyy="0.2807770732" iyz="0" izz="0.15"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.3 0.3 0.49692302"/>
+      </geometry>
+      <material name="support_gray">
+        <color rgba="0.35 0.35 0.38 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.3 0.3 0.49692302"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="frame_base_to_arm_support" type="fixed">
+    <parent link="frame_base"/>
+    <child link="arm_support_link"/>
+    <origin xyz="-0.076 0 0.27053849" rpy="0 0 0"/>
+  </joint>
+
+  <!-- FIXED: Added dummy inertial properties -->
+  <link name="frame_1">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.1"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="frame_base_to_frame_1" type="fixed">
+    <parent link="frame_base"/>
+    <child link="frame_1"/>
+    <origin xyz="-0.076 0 0.519" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="frame_1_to_link_base" type="fixed">
+    <parent link="frame_1"/>
+    <child link="link_base"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- FIXED: Added dummy inertial properties -->
+  <link name="livox_frame">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="frame_base_to_livox_frame" type="fixed">
+    <parent link="frame_base"/>
+    <child link="livox_frame"/>
+    <origin xyz="0.149 0 0.444" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================================================================== -->
+  <!-- NEW: ROS 2 Humble Gazebo Control Configuration                       -->
+  <!-- ==================================================================== -->
+  
+  <xacro:include filename="$(find mobile_manipulator_description)/urdf/mobile_manipulator_gazebo.ros2_control.xacro" />
+
+</robot>
